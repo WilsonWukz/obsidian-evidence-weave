@@ -74,6 +74,52 @@ with sync_playwright() as p:
  # panel remains full-size and pan/zoom is reversible.
  page.evaluate('''() => {window.renderer.scale=1;window.renderer.panX=0;window.renderer.panY=0}''')
  page.wait_for_timeout(150)
+ # Drag using the PDF *header*, not the graph or one of its resize corners.
+ # Pointer capture must keep the drag working across the PDF iframe.
+ window_before=page.evaluate('''() => ({
+   x:window.binding.pdfWorld.x,y:window.binding.pdfWorld.y,
+   width:window.binding.pdfBaseSize.width,height:window.binding.pdfBaseSize.height,
+   reader:document.querySelector('.pdf-embed'),
+   nodeX:window.renderer.nodeLookup['INSES/P21-Dense-X-Retrieval.md'].x,
+   nativeCalls:window.renderer.nativeCalls||0})''')
+ header=page.locator('.ew-native-pdf-header')
+ header_box=header.bounding_box(); assert header_box
+ start_x=header_box['x']+min(110,header_box['width']*.2)
+ start_y=header_box['y']+header_box['height']*.5
+ page.mouse.move(start_x,start_y)
+ page.mouse.down()
+ page.mouse.move(start_x+85,start_y+45,steps=9)
+ page.mouse.up()
+ page.wait_for_timeout(110)
+ window_after=page.evaluate('''() => ({
+   x:window.binding.pdfWorld.x,y:window.binding.pdfWorld.y,
+   width:window.binding.pdfBaseSize.width,height:window.binding.pdfBaseSize.height,
+   reader:document.querySelector('.pdf-embed'),
+   nodeX:window.renderer.nodeLookup['INSES/P21-Dense-X-Retrieval.md'].x,
+   nativeCalls:window.renderer.nativeCalls||0})''')
+ assert abs((window_after['x']-window_before['x'])-85)<2,(window_before,window_after)
+ assert abs((window_after['y']-window_before['y'])-45)<2,(window_before,window_after)
+ assert window_after['width']==window_before['width'] and window_after['height']==window_before['height']
+ assert window_after['nodeX']==window_before['nodeX']
+ assert window_after['nativeCalls']==window_before['nativeCalls']
+ assert page.evaluate('document.querySelector(".pdf-embed")==window.binding.popup.querySelector(".pdf-embed")')
+ assert page.evaluate('window.binding.lockedPath')=='INSES/P21-Dense-X-Retrieval.md'
+ print('header drag preserves PDF size, reader, original graph node and lock')
+ # Even after moving manually, graph zoom must continue to transform the PDF.
+ page.evaluate('''() => {window.renderer.scale=1.3;window.renderer.panX=25;window.renderer.panY=30}''')
+ page.wait_for_timeout(130)
+ assert page.evaluate('window.binding.popup.style.transform')=='scale(1.3)'
+ page.evaluate('''() => {window.renderer.scale=1;window.renderer.panX=0;window.renderer.panY=0}''')
+ page.wait_for_timeout(140)
+ # Clicking a PDF toolbar action must not move the window.
+ pos_before_action=page.evaluate('''() => ({...window.binding.pdfWorld})''')
+ page.locator('.ew-native-pdf-action[title="在外部打开完整 PDF"]').evaluate('el=>el.dispatchEvent(new PointerEvent("pointerdown",{bubbles:true,button:0,pointerId:47}))')
+ assert page.evaluate('window.binding.drag===null')
+ assert page.evaluate('''() => JSON.stringify(window.binding.pdfWorld)''')==__import__('json').dumps(pos_before_action,separators=(',',':'))
+ # The manually moved 810px-high reader can place its lower-right corner
+ # outside the viewport; zoom OUT first, as the real graph permits.
+ page.evaluate('''() => {window.renderer.scale=.70;window.renderer.panX=0;window.renderer.panY=0}''')
+ page.wait_for_timeout(120)
  # Resize via browser pointer interface while transformed
  box=page.locator('.ew-resize-se').bounding_box()
  assert box, 'bottom-right handle should be visible'

@@ -1,4 +1,4 @@
-# EvidenceWeave v0.4 · Mac Obsidian 1.14.4 acceptance checklist
+# EvidenceWeave v0.4.1 · Mac Obsidian 1.14.4 acceptance checklist
 
 Use only **Research-MCP-Test**. Back up `.obsidian/plugins/evidence-weave` and `INSES/M00-关系总览.md` first. The plugin does not modify Cloud/MCP.
 
@@ -8,6 +8,8 @@ Use only **Research-MCP-Test**. Back up `.obsidian/plugins/evidence-weave` and `
 - [ ] Click paper: lock; move over other papers without focus changing; click empty graph to unlock.
 - [ ] Zoom native graph by mouse wheel outside PDF: paper node, relation label and **whole PDF window** scale and pan together, without automatic side switch.
 - [ ] PDF initially 495×810 if using old v0.3 defaults; drag each of four corners; zoom out to access corners if offscreen. Size remembered if enabled.
+- [ ] Hold PDF **title bar** and drag horizontally/vertically. The window moves, but its width/height, PDF scroll position, locked paper, node positions and native pan/drag are unchanged. Toolbar buttons still work.
+- [ ] After moving the PDF, zoom/pan the native graph and verify the PDF follows the graph camera. Drag a resize corner afterward to verify resize still works.
 - [ ] Hover C00→P01 actual link: use dedicated short labels, no long summary; M00→P01 navigation does not falsely present the C00 relation.
 - [ ] Click the short label; use Chinese IME Enter to choose words; final Enter saves; M00 evidence text unchanged and only new short-label field appears.
 - [ ] Edit same source externally before Enter: conflict guard must keep draft; no silent overwrite.

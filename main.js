@@ -1,4 +1,4 @@
-// EvidenceWeave 0.4.0 - native Graph View enhancement, generated from src/.
+// EvidenceWeave 0.4.1 - native Graph View enhancement, generated from src/.
 // Reused EvidenceWeave local Vault relationship parsing and conflict-safe Markdown patching.
 function str(value) { return typeof value === 'string' ? value.trim() : ''; }
 function cleanFolder(value) { return str(value).replace(/^\/+|\/+$/g, ''); }
@@ -492,6 +492,15 @@ function resizedWorldPanel(original,drag,camera,zoom){
     x:original.x + xShift*factor*worldScale,
     y:original.y + yShift*factor*worldScale};
 }
+/** Translate the PDF in the native graph's WORLD coordinates. Pointer deltas
+ * are CSS pixels, so use the inverse native camera transform, not CSS `left`.
+ * Width and height remain unchanged and zoom/pan still affect the whole PDF. */
+function movedWorldPanel(original, drag, camera) {
+  const ratio=safePositive(camera?.dpr,1)/safePositive(camera?.scale,1);
+  return {x:original.x+(drag.x||0)*ratio,
+    y:original.y+(drag.y||0)*ratio,
+    width:original.width,height:original.height};
+}
 
 
 /* Native Graph renderer adapter. Obsidian does not publish a graph-rendering API.
@@ -652,7 +661,7 @@ class NativeGraphBinding {
     host.addEventListener('pointerenter',this.onEnter);
     host.addEventListener('pointerleave',this.onLeave);
     this.adapter.mount((event,id,type)=>this.onNodeClick(event,id,type),()=>{
-      const pinned=this.lockedPath || ((this.isInPopup||this.hoveringLabel||this.editing||Date.now()<this.hoverGraceUntil)?this.focusPath:'');
+      const pinned=this.lockedPath || ((this.isInPopup||this.drag||this.hoveringLabel||this.editing||Date.now()<this.hoverGraceUntil)?this.focusPath:'');
       return pinned?this.adapter.getNode(pinned):null;
     });
     // All native mouse gestures and the original graph simulation are left
@@ -727,7 +736,7 @@ class NativeGraphBinding {
     if(!host?.isConnected){this.setFocus('');return;}
     let wanted='';
     if(this.lockedPath)wanted=this.lockedPath;
-    else if(this.editing||this.isInPopup||this.hoveringLabel||Date.now()<this.hoverGraceUntil)wanted=this.focusPath;
+    else if(this.editing||this.drag||this.isInPopup||this.hoveringLabel||Date.now()<this.hoverGraceUntil)wanted=this.focusPath;
     else if(!this.hoverSuppressed&&this.pointerInGraph){
       const hover=this.adapter.getNativeHoveredNode();
       if(hover&&isFileGraphNode(hover.id)){wanted=hover.id;this.lastHoverAt=Date.now();}
@@ -927,6 +936,10 @@ class NativeGraphBinding {
     this.pdfNodeOffset=graphNode?{x:this.pdfWorld.x-graphNode.x,y:this.pdfWorld.y-graphNode.y}:null;
     this.popup.hidden=false;
     const head=ewEl('header','ew-native-pdf-header',this.popup);
+    head.title='按住标题栏拖动 PDF 窗口';
+    // The header is the grab handle. Buttons retain their own click actions;
+    // dragging never touches Obsidian's native Graph pan/node physics.
+    head.addEventListener('pointerdown',ev=>this.beginMove(ev));
     ewEl('div','ew-native-pdf-name',head,node.title).title=node.title;
     const actions=ewEl('div','ew-native-pdf-actions',head);
     const body=ewEl('div','ew-native-pdf-body',this.popup);
@@ -1003,31 +1016,43 @@ class NativeGraphBinding {
     if(local){const path=this.plugin.app.vault.getResourcePath(local);window.open(path,'_blank','noopener,noreferrer');}
     else if(remote)window.open(remote,'_blank','noopener,noreferrer');
   }
+  beginMove(e){
+    if(e.target?.closest?.('.ew-native-pdf-actions,button,a,input,[data-no-drag]'))return;
+    this.beginDrag(e,null);
+  }
   beginDrag(e,corner){
-    if(e.button!==0||!this.pdfWorld)return;
+    if(e.button!==0||!this.pdfWorld||this.drag)return;
     e.preventDefault();e.stopPropagation();
     const elem=e.currentTarget;
-    this.drag={pointerId:e.pointerId,element:elem,corner,
+    this.drag={pointerId:e.pointerId,element:elem,corner,mode:corner?'resize':'move',
       startX:e.clientX,startY:e.clientY,
       initial:{x:this.pdfWorld.x,y:this.pdfWorld.y,width:this.pdfBaseSize.width,height:this.pdfBaseSize.height},
       zoom:graphScaleFactor(this.adapter.renderer,this.pdfInitialScale),camera:this.camera()};
+    this.isInPopup=true;
     elem.setPointerCapture?.(e.pointerId);
-    const move=ev=>this.dragResize(ev);
+    const move=ev=>corner?this.dragResize(ev):this.dragMove(ev);
     const end=ev=>{
-      elem.removeEventListener('pointermove',move);
-      elem.removeEventListener('pointerup',end);
-      elem.removeEventListener('pointercancel',end);
       if(this.drag?.pointerId===ev.pointerId){
+        const wasResize=this.drag.mode==='resize';
         this.releasePdfHandlers();
         const node=this.adapter.getNode(this.focusPath);
         if(node&&this.pdfWorld)this.pdfNodeOffset={x:this.pdfWorld.x-node.x,y:this.pdfWorld.y-node.y};
-        this.persistSize();
+        if(wasResize)this.persistSize();
+        this.hoverGraceUntil=Date.now()+350;
       }
     };
     this.drag.move=move;this.drag.end=end;
     elem.addEventListener('pointermove',move);
     elem.addEventListener('pointerup',end);
     elem.addEventListener('pointercancel',end);
+  }
+  dragMove(e){
+    const d=this.drag;
+    if(!d||d.mode!=='move'||d.pointerId!==e.pointerId)return;
+    e.preventDefault();e.stopPropagation();
+    const next=movedWorldPanel(d.initial,{x:e.clientX-d.startX,y:e.clientY-d.startY},d.camera);
+    this.pdfWorld={x:next.x,y:next.y};
+    this.placePdf();
   }
   dragResize(e){
     const d=this.drag;
@@ -1202,5 +1227,5 @@ module.exports._test={placePdfByNode,readableEdgeAngle,labelPosition,matchNative
   viewpointForNativeRelation,patchOverviewSummary,patchTypedSummary,
   parseOverviewRelationships,buildNodeIndex,discoverPdfUrl,rendererFromLeaf,NativeGraphAdapter,
   shortLabelFor,patchOverviewLabel,patchTypedLabel,validateShortLabel,
-  screenToWorld,worldToScreen,graphScaleFactor,pdfOriginForNode,resizedWorldPanel,
+  screenToWorld,worldToScreen,graphScaleFactor,pdfOriginForNode,resizedWorldPanel,movedWorldPanel,
   avoidLabelCollisions,NativeGraphBinding,eventMayCommit};

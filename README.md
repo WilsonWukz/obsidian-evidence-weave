@@ -1,6 +1,6 @@
 # EvidenceWeave · 原生关系图谱轻量增强
 
-**v0.4.0 / candidate, native Graph View only.**
+**v0.4.1 / candidate, native Graph View only.**
 
 EvidenceWeave 不创建新图谱页面，不替换 Obsidian 的节点、连线、物理布局、拖拽、平移、缩放和原生配色。它只给 Obsidian 自带的 Graph View 添加一条学术关系短句和同一画布上的 PDF 阅读窗。仍然独立于 Cloudflare / Obsidian MCP / Zotero Cloud。
 
@@ -12,6 +12,7 @@ EvidenceWeave 不创建新图谱页面，不替换 Obsidian 的节点、连线�
 | 单击节点 | 锁定**阅读焦点**，原生节点仍可随物理布局运动；移开鼠标不换论文 |
 | 单击空白画布 | 解除锁定，恢复原生悬停 |
 | 放大/缩小及平移图谱 | 原生图谱照常交互；浮动 PDF 的位置和**整块尺寸**随图谱相同的相机参数变换 |
+| **按住 PDF 标题栏并拖动** | 在同一原生图谱画布上自由移动 PDF；松开后保留位置，图谱缩放/平移时仍一起变换；不会拖动节点或改变 PDF 大小 |
 | 拖动 PDF 任意四角 | 只调整 PDF 的基础宽/高，默认记住尺寸；不会拖动原生图谱 |
 | 在 PDF 内滚动 | 阅读 PDF 正文，避免双层滚动区域；不会误触发图谱缩放 |
 | 点击关系短句 | 内联编辑 `label_from_source` / `label_from_target`，或 M00 的独立短句字段；回车保存，Esc 取消 |
@@ -56,10 +57,10 @@ label_review_status: unverified
 ## 安装 / 升级
 
 1. 先备份测试 Vault 的 `.obsidian/plugins/evidence-weave` 及 `INSES/M00-关系总览.md`。
-2. 将 `evidence-weave-plugin-v0.4.0-native.zip` 内的 `evidence-weave/` 解压到 `Research-MCP-Test/.obsidian/plugins/` 覆盖旧版。
+2. 将 `evidence-weave-plugin-v0.4.1-native.zip` 内的 `evidence-weave/` 解压到 `Research-MCP-Test/.obsidian/plugins/` 覆盖旧版。
 3. 重新启动 Obsidian，或先禁用再启用 EvidenceWeave。
 4. 直接打开 Obsidian **核心插件「关系图谱」**，而非以前的自制工作台。
-5. 测试 P01 / P21 等论文节点；先看原生节点是否仍能拖动及释放后受力运动，再检查标签、锁定、PDF 缩放、四角拖动、长 PDF 滚动和短句写回。
+5. 测试 P01 / P21 等论文节点；先看原生节点是否仍能拖动及释放后受力运动，再检查标签、锁定、**PDF 标题栏平移**、图谱缩放、四角调整大小、长 PDF 滚动和短句写回。
 
 **重要：** 原生 Graph View 的内部 Renderer API 未公开，Obsidian 1.14.4 的真正物理动画、交互和不同出版社 PDF 兼容性，必须在使用者 Mac 上实测。单元测试与 Chromium 模拟只验证我们没有主动改写原生物理控制与相关 DOM 行为；不代表原生实际版本已验收。
 

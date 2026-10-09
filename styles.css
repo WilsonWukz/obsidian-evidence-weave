@@ -44,9 +44,13 @@
 .ew-native-pdf-header {
   flex:0 0 auto;display:flex;align-items:center;gap:6px;
   padding:4px 8px;min-height:33px;
+  cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;
   background:var(--background-secondary);
   border-bottom:1px solid var(--background-modifier-border);
 }
+.ew-native-pdf-header:active {cursor:grabbing}
+.ew-native-pdf-header .ew-native-pdf-actions,
+.ew-native-pdf-header .ew-native-pdf-action {cursor:pointer}
 .ew-native-pdf-name {flex:1;min-width:0;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ew-native-pdf-actions {display:flex;gap:3px;align-items:center;flex:0 0 auto}
 .ew-native-pdf-action {

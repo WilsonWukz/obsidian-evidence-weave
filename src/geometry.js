@@ -90,3 +90,12 @@ function resizedWorldPanel(original,drag,camera,zoom){
     x:original.x + xShift*factor*worldScale,
     y:original.y + yShift*factor*worldScale};
 }
+/** Translate the PDF in the native graph's WORLD coordinates. Pointer deltas
+ * are CSS pixels, so use the inverse native camera transform, not CSS `left`.
+ * Width and height remain unchanged and zoom/pan still affect the whole PDF. */
+function movedWorldPanel(original, drag, camera) {
+  const ratio=safePositive(camera?.dpr,1)/safePositive(camera?.scale,1);
+  return {x:original.x+(drag.x||0)*ratio,
+    y:original.y+(drag.y||0)*ratio,
+    width:original.width,height:original.height};
+}

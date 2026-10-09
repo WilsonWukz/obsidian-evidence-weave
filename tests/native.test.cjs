@@ -90,6 +90,35 @@ test('graph camera changes move and zoom PDF as one object',()=>{
  assert.equal(x.graphScaleFactor(after,before.scale),2);
  assert.ok(newScreen.x!==point.x&&newScreen.y!==point.y);
 });
+test('PDF header movement translates in native world space without resizing',()=>{
+ const original={x:18,y:42,width:495,height:810};
+ const camera={scale:4,panX:200,panY:-90,dpr:2};
+ const moved=x.movedWorldPanel(original,{x:80,y:-60},camera);
+ assert.deepEqual(moved,{x:58,y:12,width:495,height:810});
+ const oldScreen=x.worldToScreen(original,camera);
+ const newScreen=x.worldToScreen(moved,camera);
+ assert.ok(Math.abs((newScreen.x-oldScreen.x)-80)<1e-8);
+ assert.ok(Math.abs((newScreen.y-oldScreen.y)+60)<1e-8);
+ // Mouse motion from the reverse direction must also preserve size.
+ assert.deepEqual(x.movedWorldPanel(moved,{x:-80,y:60},camera),original);
+});
+test('manual PDF move does not mutate the underlying graph node or document',()=>{
+ const node={id:target,x:60,y:70};
+ const binding=Object.create(x.NativeGraphBinding.prototype);
+ binding.drag={mode:'move',pointerId:17,startX:100,startY:150,
+   initial:{x:10,y:20,width:495,height:810},camera:{scale:2,panX:0,panY:0,dpr:2}};
+ binding.pdfWorld={x:10,y:20};binding.pdfBaseSize={width:495,height:810};
+ binding.placePdf=()=>{binding.moves=(binding.moves||0)+1};
+ let prevented=0,stopped=0;
+ binding.dragMove({pointerId:17,clientX:180,clientY:210,
+   preventDefault:()=>prevented++,stopPropagation:()=>stopped++});
+ assert.deepEqual(binding.pdfWorld,{x:90,y:80});
+ assert.deepEqual(binding.pdfBaseSize,{width:495,height:810});
+ assert.equal(binding.moves,1);assert.equal(prevented,1);assert.equal(stopped,1);
+ assert.deepEqual(node,{id:target,x:60,y:70});
+ binding.dragMove({pointerId:18,clientX:250,clientY:250,preventDefault(){},stopPropagation(){}});
+ assert.equal(binding.moves,1);
+});
 test('all four PDF resize corners adjust dimensions and correct world origin',()=>{
  const orig={x:12,y:32,width:495,height:810};
  const cam={scale:2,panX:0,panY:0,dpr:1};

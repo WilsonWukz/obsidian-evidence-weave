@@ -106,5 +106,5 @@ module.exports._test={placePdfByNode,readableEdgeAngle,labelPosition,matchNative
   viewpointForNativeRelation,patchOverviewSummary,patchTypedSummary,
   parseOverviewRelationships,buildNodeIndex,discoverPdfUrl,rendererFromLeaf,NativeGraphAdapter,
   shortLabelFor,patchOverviewLabel,patchTypedLabel,validateShortLabel,
-  screenToWorld,worldToScreen,graphScaleFactor,pdfOriginForNode,resizedWorldPanel,
+  screenToWorld,worldToScreen,graphScaleFactor,pdfOriginForNode,resizedWorldPanel,movedWorldPanel,
   avoidLabelCollisions,NativeGraphBinding,eventMayCommit};
