@@ -491,7 +491,7 @@ class NativeGraphBinding {
     this.adapter=new NativeGraphAdapter(renderer);
     this.lockedPath='';this.focusPath='';this.labels=[];
     this.destroyed=false;this.editing=null;this.seq=0;this.pdfKey='';
-    this.isInPopup=false;this.pointerInGraph=false;
+    this.isInPopup=false;this.hoveringLabel=false;this.pointerInGraph=false;
     this.lastNodePoint=null;this.rafId=0;this.refreshTimers=[];this.down=null;
     this.pdfComponent=null;
     this.onDown=e=>this.handlePointerDown(e);
@@ -516,7 +516,10 @@ class NativeGraphBinding {
     host.addEventListener('pointerup',this.onUp,true);
     host.addEventListener('pointerenter',this.onEnter);
     host.addEventListener('pointerleave',this.onLeave);
-    this.adapter.mount((event,id,type)=>this.onNodeClick(event,id,type),()=>this.lockedPath?this.adapter.getNode(this.lockedPath):null);
+    this.adapter.mount((event,id,type)=>this.onNodeClick(event,id,type),()=>{
+      const pinned=this.lockedPath || ((this.isInPopup||this.hoveringLabel||this.editing)?this.focusPath:'');
+      return pinned?this.adapter.getNode(pinned):null;
+    });
     this.rafId=requestAnimationFrame(()=>this.tick());
   }
   detach(){
@@ -559,7 +562,7 @@ class NativeGraphBinding {
   unlock(){
     this.clearRepaintTimers();
     this.lockedPath='';
-    this.isInPopup=false;
+    this.isInPopup=false;this.hoveringLabel=false;
     this.adapter.renderer.highlightNode=null;
     // A stale PIXI hit-test must not immediately restore the old hover state.
     this.adapter.renderer.mouseX=-1e9;
@@ -590,7 +593,7 @@ class NativeGraphBinding {
       const hover=this.adapter.getNativeHoveredNode();
       let wanted='';
       if(this.lockedPath)wanted=this.lockedPath;
-      else if(this.editing||this.isInPopup)wanted=this.focusPath;
+      else if(this.editing||this.isInPopup||this.hoveringLabel)wanted=this.focusPath;
       else if(this.pointerInGraph&&hover&&isFileGraphNode(hover.id))wanted=hover.id;
       if(wanted&&!this.plugin.isScopedPath(wanted))wanted='';
       if(wanted!==this.focusPath)this.setFocus(wanted);
@@ -635,6 +638,8 @@ class NativeGraphBinding {
       btn.type='button';btn.title=summary;
       btn.setAttribute('aria-label',`编辑 ${relation.id} 关系：${summary}`);
       btn.setAttribute('data-relation-id',relation.id);
+      btn.addEventListener('pointerenter',()=>{this.hoveringLabel=true;});
+      btn.addEventListener('pointerleave',()=>{this.hoveringLabel=false;});
       btn.addEventListener('pointerdown',ev=>ev.stopPropagation());
       btn.addEventListener('click',ev=>{ev.stopPropagation();this.startEdit({button:btn,relation,viewpoint,summary});});
       this.labels.push({element:btn,link,relation,viewpoint,proxy});
