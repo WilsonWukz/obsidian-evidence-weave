@@ -191,3 +191,21 @@ test('model refresh preserves PDF if its source did not change',()=>{
  binding.onModelUpdated();
  assert.equal(rendered,1);assert.equal(hidden,0);assert.equal(updated,0);
 });
+
+test('generic Vault notes with local PDF embeds are recognized without special research metadata',async()=>{
+ const pdfNote={path:'Reading/Example.md',basename:'Example'};
+ const textNote={path:'Misc/Unrelated.md',basename:'Unrelated'};
+ const app={vault:{getMarkdownFiles:()=>[pdfNote,textNote]},metadataCache:{
+   getFileCache: f => f===pdfNote ? {embeds:[{link:'Papers/Research Study.pdf#page=3'}]} : {},
+   resolvedLinks:{} }};
+ const model=await x.buildGraphModel(app,{projectFolder:'',overviewPath:''});
+ assert.equal(model.nodes.length,1);
+ assert.equal(model.nodes[0].path,'Reading/Example.md');
+ assert.equal(model.nodes[0].pdfPath,'Papers/Research Study.pdf');
+});
+test('generic paper-tagged notes remain selectable even before a PDF is attached',async()=>{
+ const f={path:'Papers/A.md',basename:'A'};
+ const app={vault:{getMarkdownFiles:()=>[f]},metadataCache:{getFileCache:()=>({frontmatter:{tags:['paper'],title:'A'}}),resolvedLinks:{}}};
+ const model=await x.buildGraphModel(app,{projectFolder:'',overviewPath:''});
+ assert.equal(model.nodes[0].kind,'paper');
+});
