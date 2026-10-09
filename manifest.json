@@ -1,9 +1,9 @@
 {
   "id": "evidence-weave",
   "name": "EvidenceWeave",
-  "version": "0.1.0",
-  "minAppVersion": "1.5.0",
-  "description": "Evidence-aware scholarly graph, relationship explanations, and PDF reading in Obsidian.",
+  "version": "0.3.0",
+  "minAppVersion": "1.8.0",
+  "description": "Lightweight inline PDF and evidence labels for Obsidian's native Graph View.",
   "author": "WilsonWukz",
   "isDesktopOnly": true
 }
