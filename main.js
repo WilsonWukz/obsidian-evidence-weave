@@ -1,21 +1,5 @@
-/* EvidenceWeave — local-first scholarly evidence navigator for Obsidian.
- * No network, sync or MCP code; reads only the current Vault.
- * Built with zero third-party runtime dependencies.
- */
-'use strict';
-const { Plugin, ItemView, MarkdownRenderer, PluginSettingTab, Setting, Notice } = require('obsidian');
-
-const VIEW_TYPE = 'evidence-weave-graph';
-const DEFAULT_SETTINGS = Object.freeze({
-  projectFolder: 'INSES',
-  overviewPath: 'INSES/M00-关系总览.md',
-  showUnverifiedLinks: false,
-  previewRemotePdfs: true,
-  graphReaderWidth: 40,
-});
-const SVG_NS = 'http://www.w3.org/2000/svg';
-const NODE_KINDS = new Set(['paper', 'concept', 'method', 'dataset', 'question', 'center']);
-
+// EvidenceWeave 0.3.0 - native Graph View enhancement, generated from src/.
+// Reused EvidenceWeave local Vault relationship parsing and conflict-safe Markdown patching.
 function str(value) { return typeof value === 'string' ? value.trim() : ''; }
 function cleanFolder(value) { return str(value).replace(/^\/+|\/+$/g, ''); }
 function withinFolder(path, folder) { return !folder || path.startsWith(`${folder}/`); }
@@ -35,6 +19,97 @@ function safeWebUrl(url) {
 }
 function stripStatus(text) {
   return str(text).replace(/\s*状态[:：]\s*.+$/u, '').trim();
+}
+function validateSummary(value) {
+  const summary = str(value);
+  if (!summary || summary.length > 400 || /[\r\n\u0000-\u001f\u007f]/u.test(summary)) {
+    throw new Error('关系说明必须是一句 1–400 字的单行文字。');
+  }
+  return summary;
+}
+function splitLinesPreservingNewlines(content) {
+  return content.match(/[^\r\n]*(?:\r\n|\n|\r|$)/g)?.filter(Boolean) || [];
+}
+function textWithoutEol(line) { return line.replace(/\r\n$|[\r\n]$/u, ''); }
+function endOfLine(line) { return line.match(/\r\n$|[\r\n]$/u)?.[0] || ''; }
+function isOverviewLine(line, relationId) {
+  const match = textWithoutEol(line).match(/^\s*-\s*\[\[([^|\]]+)\|[^\]]+\]\]\s*[：:]\s*.+$/u);
+  return !!match && match[1].endsWith(`#^${relationId}`);
+}
+function splitOverviewLine(line) {
+  const match = textWithoutEol(line).match(/^(\s*-\s*\[\[[^|\]]+\|[^\]]+\]\]\s*[：:]\s*)(.+)$/u);
+  if (!match) throw new Error('源笔记中的关系行格式发生变化。');
+  return { prefix: match[1], summary: stripStatus(match[2]) };
+}
+const REVERSE_PREFIX = '  - **被引视角**：';
+function reverseSummaryFromLine(line) {
+  return textWithoutEol(line).match(/^\s{2,}-\s*\*\*被引视角\*\*\s*[：:]\s*(.+)$/u)?.[1]?.trim() || '';
+}
+function patchOverviewSummary(content, relation, viewpoint, newText) {
+  const summary = validateSummary(newText);
+  if (!relation || relation.kind !== 'overview' || !relation.storage?.sourceLine) {
+    throw new Error('只有带来源的关系说明才能保存。');
+  }
+  const rows = splitLinesPreservingNewlines(content);
+  const matches = rows.map((line, i) => isOverviewLine(line, relation.id) ? i : -1).filter(i => i >= 0);
+  if (matches.length !== 1) throw new Error('关系编号不存在或重复，已阻止写入。');
+  const i = matches[0], oldLine = rows[i];
+  if (textWithoutEol(oldLine) !== relation.storage.sourceLine) {
+    throw new Error('关系源文字已变化，请刷新后重新编辑，避免覆盖同步修改。');
+  }
+  const {prefix, summary: original} = splitOverviewLine(oldLine);
+  const eol = endOfLine(oldLine) || (content.includes('\r\n') ? '\r\n' : '\n');
+  if (viewpoint === relation.source) {
+    if (original !== relation.summaryFromSource) throw new Error('关系说明与当前笔记版本不一致。');
+    rows[i] = `${prefix}${summary} 状态：用户修改待复核。${endOfLine(oldLine)}`;
+  } else if (viewpoint === relation.target) {
+    // Keep both viewpoints visible in M00; the indented line is ordinary Markdown.
+    rows[i] = `${prefix}${original} 状态：用户修改待复核。${endOfLine(oldLine)}`;
+    const existing = i + 1 < rows.length ? reverseSummaryFromLine(rows[i + 1]) : '';
+    if (relation.storage.reverseLine) {
+      if (!existing || textWithoutEol(rows[i + 1]) !== relation.storage.reverseLine) {
+        throw new Error('反向说明已被其他编辑改变，请刷新后重试。');
+      }
+      rows[i + 1] = `${REVERSE_PREFIX}${summary}${endOfLine(rows[i + 1])}`;
+    } else {
+      if (existing) throw new Error('出现了新的反向说明，请刷新后重试。');
+      if (!endOfLine(oldLine)) rows[i] += eol;
+      rows.splice(i + 1, 0, `${REVERSE_PREFIX}${summary}${endOfLine(oldLine) || eol}`);
+    }
+  } else throw new Error('关系视角无效。');
+  return rows.join('');
+}
+function patchTypedSummary(content, relation, viewpoint, newText, parseYamlFn) {
+  const summary = validateSummary(newText);
+  if (relation?.kind !== 'typed' || !relation.storage?.note || typeof parseYamlFn !== 'function') {
+    throw new Error('无法确认关系笔记的来源与格式。');
+  }
+  const fmMatch = content.match(/^(---\r?\n)([\s\S]*?)(\r?\n---(?:\r?\n|$))/u);
+  if (!fmMatch) throw new Error('关系笔记缺少标准 YAML frontmatter。');
+  const frontmatter = parseYamlFn(fmMatch[2]);
+  if (!frontmatter || str(frontmatter.relation_id) !== relation.id ||
+      str(frontmatter.source || frontmatter.source_id) !== relation.storage.sourceKey ||
+      str(frontmatter.target || frontmatter.target_id) !== relation.storage.targetKey) {
+    throw new Error('关系编号或端点已变化，请刷新后再保存。');
+  }
+  const key = viewpoint === relation.source ? 'summary_from_source' :
+    viewpoint === relation.target ? 'summary_from_target' : null;
+  if (!key) throw new Error('关系视角无效。');
+  const lines = fmMatch[2].split(/\r?\n/u);
+  const fieldIndex = lines.map((l,i) => new RegExp(`^${key}\\s*:`,'u').test(l) ? i : -1).filter(i => i>=0);
+  if (fieldIndex.length !== 1 || /:\s*[>|]/u.test(lines[fieldIndex[0]])) {
+    throw new Error('此 YAML 字段不是可安全更新的单行格式，请在笔记中编辑。');
+  }
+  if (str(frontmatter[key]) !== directedSummary(relation, viewpoint)) {
+    throw new Error('当前视角的文字已变化，已阻止覆盖。');
+  }
+  lines[fieldIndex[0]] = `${key}: ${JSON.stringify(summary)}`; // JSON quoted strings are valid YAML scalars.
+  const statusIndexes = lines.map((l,i)=>/^review_status\s*:/u.test(l)?i:-1).filter(i=>i>=0);
+  if (statusIndexes.length > 1) throw new Error('review_status 出现重复字段。');
+  if (statusIndexes.length) lines[statusIndexes[0]] = 'review_status: unverified';
+  else lines.push('review_status: unverified');
+  const updated = lines.join(fmMatch[2].includes('\r\n') ? '\r\n' : '\n');
+  return fmMatch[1] + updated + fmMatch[3] + content.slice(fmMatch[0].length);
 }
 function shorten(text, max = 54) {
   const value = str(text).replace(/\s+/g, ' ');
@@ -76,7 +151,9 @@ function buildNodeIndex(nodes) {
 function parseOverviewRelationships(markdown, sourceNode, index, overviewPath) {
   if (!sourceNode) return [];
   const result = [];
-  for (const line of markdown.split(/\r?\n/)) {
+  const lines = markdown.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     // Require both an exact Obsidian relation block and an explanatory sentence.
     const match = line.match(/^\s*-\s*\[\[([^|\]]+)\|[^\]]+\]\]\s*[：:]\s*(.+)$/u);
     if (!match) continue;
@@ -87,13 +164,17 @@ function parseOverviewRelationships(markdown, sourceNode, index, overviewPath) {
     if (!dest || dest.id === sourceNode.id) continue;
     const description = stripStatus(match[2]);
     if (!description) continue;
+    const reverseLine = lines[i + 1] || '';
+    const reverse = reverseSummaryFromLine(reverseLine);
     result.push({
       id: anchorMatch[1], source: sourceNode.id, target: dest.id,
       type: 'citation_context', kind: 'overview',
       status: /状态[:：]\s*有限关系已审/u.test(match[2]) ? 'limited_reviewed' : 'unverified',
       summaryFromSource: description,
-      summaryFromTarget: `该文献在 ${sourceNode.basename} 中的作用：${description}`,
+      summaryFromTarget: reverse || `该文献在 ${sourceNode.basename} 中的作用：${description}`,
       evidence: { note: dest.path, block: anchorMatch[1], sourceNote: overviewPath },
+      storage: {kind:'overview',note:overviewPath,sourceLine:line,
+        reverseLine:reverse?reverseLine:null},
     });
   }
   return result;
@@ -206,7 +287,12 @@ async function buildGraphModel(app, settings) {
   if (overviewFile && center) {
     overview = parseOverviewRelationships(await app.vault.cachedRead(overviewFile), center, index, overviewFile.path);
   }
-  const typed = relationFiles.map(({fm}) => parseTypedRelationship(fm, index)).filter(Boolean);
+  const typed = relationFiles.map(({file,fm}) => {
+    const relation = parseTypedRelationship(fm, index);
+    if (relation) relation.storage = {kind:'typed',note:file.path,
+      sourceKey:str(fm.source || fm.source_id),targetKey:str(fm.target || fm.target_id)};
+    return relation;
+  }).filter(Boolean);
   const observed = [];
   const existingNodes = new Map(nodes.map(n => [n.path, n]));
   const links = app.metadataCache.resolvedLinks || {};
@@ -229,675 +315,579 @@ async function buildGraphModel(app, settings) {
     overviewCount: overview.length, typedCount: typed.length };
 }
 
-function initialLayout(nodes, edges, centerId) {
-  const positions = new Map();
-  if (!nodes.length) return positions;
-  const center = nodes.find(n => n.id === centerId) || nodes[0];
-  positions.set(center.id, { x: 545, y: 390 });
-  const others = nodes.filter(n => n.id !== center.id).sort((a,b) => a.id.localeCompare(b.id));
-  // Stable, immediately usable layout; avoid random jitter every time Vault reloads.
-  others.forEach((node, i) => {
-    const ring = i < 13 ? 0 : i < 31 ? 1 : 2;
-    const ringStart = ring === 0 ? 0 : ring === 1 ? 13 : 31;
-    const ringSize = ring === 0 ? Math.min(13, others.length) : ring === 1 ? Math.min(18, others.length - 13) : Math.max(1, others.length - 31);
-    const local = i - ringStart;
-    const angle = -Math.PI / 2 + (2 * Math.PI * local / ringSize) + ring * 0.13;
-    const r = [260, 370, 490][ring];
-    positions.set(node.id, {x: 545 + Math.cos(angle) * r, y: 390 + Math.sin(angle) * r * 0.86});
-  });
-  // A few deterministic attraction/repulsion iterations relieve clashes without unstable physics.
-  const all = [...nodes];
-  const forceIterations = nodes.length <= 100 ? 38 : 0;
-  for (let step=0; step<forceIterations; step++) {
-    const velocities = new Map(all.map(n=>[n.id,{x:0,y:0}]));
-    for(let i=0;i<all.length;i++) for(let j=i+1;j<all.length;j++) {
-      const a=positions.get(all[i].id), b=positions.get(all[j].id);
-      const dx=a.x-b.x, dy=a.y-b.y, d2=Math.max(200,dx*dx+dy*dy);
-      const force=6200/d2;
-      const magnitude = Math.sqrt(d2);
-      const fx=force*dx/magnitude, fy=force*dy/magnitude;
-      velocities.get(all[i].id).x+=fx; velocities.get(all[i].id).y+=fy;
-      velocities.get(all[j].id).x-=fx; velocities.get(all[j].id).y-=fy;
-    }
-    for(const e of edges.filter(x=>x.kind!=='wikilink')) {
-      const a=positions.get(e.source), b=positions.get(e.target);
-      if(!a||!b) continue;
-      const dx=b.x-a.x,dy=b.y-a.y,dist=Math.max(1,Math.hypot(dx,dy));
-      const pull=0.009*(dist-275);
-      velocities.get(e.source).x+=pull*dx/dist; velocities.get(e.source).y+=pull*dy/dist;
-      velocities.get(e.target).x-=pull*dx/dist; velocities.get(e.target).y-=pull*dy/dist;
-    }
-    for(const node of others) {
-      const p=positions.get(node.id), v=velocities.get(node.id);
-      p.x=clamp(p.x + clamp(v.x,-7,7),70,1030);
-      p.y=clamp(p.y + clamp(v.y,-7,7),70,740);
-    }
-  }
-  return positions;
+
+
+/* Pure geometry for inline native graph annotations. */
+'use strict';
+function placePdfByNode(point, viewport, desiredWidth = 330, desiredHeight = 460, padding = 12) {
+  const w = Math.max(0, viewport.width || 0), h = Math.max(0, viewport.height || 0);
+  if (w < 300 || h < 170 || !point) return null;
+  const width = Math.min(desiredWidth, Math.max(235, w - 2 * padding));
+  const height = Math.min(desiredHeight, Math.max(145, h - 2 * padding));
+  const gap = 28;
+  const rightRoom = w - point.x - gap - padding;
+  const leftRoom = point.x - gap - padding;
+  const preferred = rightRoom >= width || rightRoom >= leftRoom ? 'right' : 'left';
+  const x = preferred === 'right' ? point.x + gap : point.x - gap - width;
+  return {
+    side: preferred,
+    x: Math.max(padding, Math.min(w - width - padding, x)),
+    y: Math.max(padding, Math.min(h - height - padding, point.y - 42)),
+    width, height,
+  };
 }
-function svgEl(tag, attrs = {}, text = null) {
-  const element = document.createElementNS(SVG_NS, tag);
-  for (const [key, value] of Object.entries(attrs)) element.setAttribute(key, String(value));
-  if (text !== null) element.textContent = String(text);
-  return element;
+function readableEdgeAngle(dx,dy) {
+  let angle = Math.atan2(dy,dx);
+  if (angle > Math.PI/2) angle -= Math.PI;
+  if (angle < -Math.PI/2) angle += Math.PI;
+  return angle;
 }
-function dom(tag, className, parent, text) {
-  const element = document.createElement(tag);
-  if (className) element.className = className;
-  if (text !== undefined) element.textContent = String(text);
-  if (parent) parent.appendChild(element);
-  return element;
-}
-function btn(parent, text, onClick, cls = '') {
-  const element = dom('button', `ew-button ${cls}`.trim(), parent, text);
-  element.type = 'button';
-  element.addEventListener('click', onClick);
-  return element;
-}
-function openUrl(url) {
-  const safe = safeWebUrl(url);
-  if (safe) window.open(safe, '_blank', 'noopener,noreferrer');
-}
-function statusLabel(status) {
-  if (status === 'reviewed') return '声明为已审';
-  if (status === 'limited_reviewed') return '有限关系已审';
-  return '尚未核验';
+function labelPosition(a,b,ratio=0.52) {
+  if (!a || !b) return null;
+  return {x:a.x+(b.x-a.x)*ratio,y:a.y+(b.y-a.y)*ratio,
+    angle:readableEdgeAngle(b.x-a.x,b.y-a.y),
+    length:Math.hypot(b.x-a.x,b.y-a.y)};
 }
 
-class EvidenceWeaveView extends ItemView {
-  constructor(leaf, plugin) {
-    super(leaf);
-    this.plugin = plugin;
-    this.model = { nodes: [], edges: [], centerId: '' };
-    this.nodeMap = new Map();
-    this.positionMap = new Map();
-    this.nodeElements = new Map();
-    this.edgeElements = new Map();
-    this.selectedNodeId = '';
-    this.selectedEdgeId = '';
-    this.hoverNodeId = '';
-    this.hoverEdgeId = '';
-    this.searchText = '';
-    this.panX = 0; this.panY = 0; this.scale = 1;
-    this.readerSeq = 0;
-    this.noteCache = new Map();
-    this.hoverTimer = null;
-    this.restoreTimer = null;
-    this.pdfComponent = null;
-    this.dragInfo = null;
-  }
-  getViewType() { return VIEW_TYPE; }
-  getDisplayText() { return 'EvidenceWeave · 论文证据'; }
-  getIcon() { return 'network'; }
 
-  async onOpen() {
-    const container = this.containerEl.children[1] || this.containerEl;
-    container.empty();
-    this.root = dom('div', 'ew-root', container);
-    const toolbar = dom('div', 'ew-toolbar', this.root);
-    const brand = dom('div', 'ew-brand', toolbar);
-    dom('span', 'ew-brand-mark', brand, '✦');
-    dom('strong', '', brand, 'EvidenceWeave');
-    this.stats = dom('span', 'ew-stats', toolbar, '正在索引 Vault…');
-    const search = dom('input', 'ew-search', toolbar);
-    search.type = 'search'; search.placeholder = '搜索论文 / P21…';
-    search.setAttribute('aria-label', '搜索论文节点');
-    search.addEventListener('input', () => { this.searchText = search.value.trim().toLocaleLowerCase(); this.updateFocus(); });
-    search.addEventListener('keydown', (event) => {
-      if (event.key !== 'Enter') return;
-      const matched = this.model.nodes.find(n => [n.basename,n.title,n.id].some(x=>x.toLocaleLowerCase().includes(this.searchText)));
-      if (matched) this.pinNode(matched.id);
-    });
-    this.toggleButton = btn(toolbar, '显示未核双链', async () => {
-      this.plugin.settings.showUnverifiedLinks = !this.plugin.settings.showUnverifiedLinks;
-      await this.plugin.saveSettings();
-      this.renderGraph();
-    });
-    btn(toolbar, '重置视图', () => this.resetView());
-    btn(toolbar, '刷新', () => this.reload());
+/* Native Graph renderer adapter. Obsidian does not publish a graph-rendering API.
+ * Only this module may depend on undocumented renderer properties.
+ * Each binding retains/restores its own renderer methods.
+ */
+'use strict';
 
-    const workbench = dom('div', 'ew-workbench', this.root);
-    this.graphPane = dom('section', 'ew-graph-pane', workbench);
-    this.graphPane.setAttribute('aria-label','科研关系图谱');
-    const hint = dom('div', 'ew-graph-hint', this.graphPane);
-    dom('strong', '', hint, 'Hover · 阅读关系');
-    dom('span', '', hint, '悬停高亮邻边并显示解释；点击锁定；双击打开笔记；滚轮缩放。');
-    this.svg = svgEl('svg', { viewBox:'0 0 1100 800', class:'ew-svg', role:'img', 'aria-label':'Interactive evidence graph' });
-    this.graphPane.appendChild(this.svg);
-    this.stage = svgEl('g', {class:'ew-stage'});
-    this.svg.appendChild(this.stage);
-    this.graphFooter = dom('div', 'ew-graph-footer', this.graphPane);
-    dom('span', 'ew-legend-item', this.graphFooter, '● 有证据关系');
-    dom('span', 'ew-legend-item', this.graphFooter, '┄ 仅笔记双链（未核验）');
+function rendererFromLeaf(leaf) {
+  const type = leaf?.view?.getViewType?.();
+  if (!['graph', 'localgraph'].includes(type)) return null;
+  const view = leaf.view;
+  const candidates = [view.renderer, view.graph?.renderer, view.graphRenderer,
+    view.visualization?.renderer, view.renderer?.renderer];
+  for (const r of candidates) {
+    if (r && r.containerEl?.nodeType===1 && Array.isArray(r.links) &&
+        r.nodeLookup && typeof r.nodeLookup === 'object' &&
+        typeof r.scale === 'number' && typeof r.panX === 'number' &&
+        typeof r.panY === 'number' && typeof r.onNodeClick === 'function' &&
+        typeof r.changed === 'function') return r;
+  }
+  return null;
+}
 
-    this.resizer = dom('div', 'ew-resize-handle', workbench);
-    this.resizer.setAttribute('aria-label', '调整论文阅读区域宽度');
-    this.reader = dom('aside', 'ew-reader', workbench);
-    this.reader.setAttribute('aria-label','论文与证据阅读面板');
-    this.reader.style.width = `${this.plugin.settings.graphReaderWidth}%`;
-    this.readerHeader = dom('div', 'ew-reader-header', this.reader);
-    this.pdfPanel = dom('div', 'ew-pdf-panel', this.reader);
-    this.evidencePanel = dom('div', 'ew-evidence-panel', this.reader);
-    this.relationsPanel = dom('div', 'ew-relations-panel', this.reader);
-    this.installInteractions(workbench);
-    await this.reload();
+class NativeGraphAdapter {
+  constructor(renderer) {
+    this.renderer = renderer;
+    this.originalClick = renderer.onNodeClick;
+    this.originalGetHighlight = renderer.getHighlightNode;
+    this.installed = false;
+    this.patchedClick = null;this.patchedGetHighlight = null;
   }
-
-  async onClose() {
-    clearTimeout(this.hoverTimer);
-    clearTimeout(this.restoreTimer);
-    this.disposePdf();
-    this.readerSeq++;
-    this.noteCache.clear();
-  }
-
-  async reload() {
-    this.stats.textContent = '读取本地笔记…';
-    const before = this.selectedNodeId;
-    try {
-      this.noteCache.clear();
-      this.model = await buildGraphModel(this.app, this.plugin.settings);
-      this.nodeMap = new Map(this.model.nodes.map(n => [n.id,n]));
-      this.selectedNodeId = this.nodeMap.has(before) ? before : this.model.centerId;
-      this.selectedEdgeId = '';
-      this.hoverNodeId = ''; this.hoverEdgeId = '';
-      this.positionMap = initialLayout(this.model.nodes, this.model.edges, this.model.centerId);
-      this.renderGraph();
-      const validated = this.model.edges.filter(e=>e.kind!=='wikilink').length;
-      this.stats.textContent = `${this.model.nodes.length} 节点 · ${validated} 条证据关系`;
-      if (this.selectedNodeId) await this.showReader(this.selectedNodeId, null);
-      else this.renderEmptyReader();
-    } catch (err) {
-      this.stats.textContent = '索引失败';
-      this.renderEmptyReader('读取 Vault 失败。检查 INSES 路径、M00 文件和插件设置。');
-      console.error('[EvidenceWeave] Could not build graph', err);
-      new Notice('EvidenceWeave: 读取笔记失败，请查看控制台。');
-    }
-  }
-
-  resetView() {
-    this.panX=0; this.panY=0; this.scale=1;
-    this.updateTransform();
-  }
-  updateTransform() {
-    this.stage.setAttribute('transform', `translate(${this.panX} ${this.panY}) scale(${this.scale})`);
-  }
-  visibleEdges() { return this.model.edges.filter(e=>this.plugin.settings.showUnverifiedLinks || e.kind !== 'wikilink'); }
-
-  renderGraph() {
-    this.stage.replaceChildren();
-    this.nodeElements.clear(); this.edgeElements.clear();
-    this.toggleButton.classList.toggle('is-active', this.plugin.settings.showUnverifiedLinks);
-    this.toggleButton.setAttribute('aria-pressed', String(this.plugin.settings.showUnverifiedLinks));
-    const edgeLayer = svgEl('g', {class:'ew-edges'});
-    const labelLayer = svgEl('g', {class:'ew-edge-labels'});
-    const nodeLayer = svgEl('g', {class:'ew-nodes'});
-    this.stage.append(edgeLayer,labelLayer,nodeLayer);
-    this.labelLayer = labelLayer;
-    for (const edge of this.visibleEdges()) {
-      const source = this.positionMap.get(edge.source), target = this.positionMap.get(edge.target);
-      if (!source || !target) continue;
-      const group = svgEl('g', {class:`ew-edge ${edge.kind === 'wikilink' ? 'is-wikilink' : 'is-evidence'}`});
-      const line = svgEl('line', {x1:source.x,y1:source.y,x2:target.x,y2:target.y});
-      line.classList.add('ew-edge-stroke');
-      const hit = svgEl('line', {x1:source.x,y1:source.y,x2:target.x,y2:target.y});
-      hit.classList.add('ew-edge-hit');
-      group.append(line,hit);
-      const title = svgEl('title', {}, `${edge.type}: ${edge.summaryFromSource}`);
-      group.appendChild(title);
-      group.addEventListener('pointerenter', () => {
-        this.hoverEdgeId = edge.id;
-        this.hoverNodeId = '';
-        clearTimeout(this.hoverTimer);
-        clearTimeout(this.restoreTimer);
-        this.updateFocus();
-      });
-      group.addEventListener('pointerleave', () => {
-        if (this.hoverEdgeId === edge.id) this.hoverEdgeId = '';
-        this.updateFocus();
-      });
-      group.addEventListener('click', (event) => { event.stopPropagation(); this.pinEdge(edge.id); });
-      edgeLayer.appendChild(group);
-      this.edgeElements.set(edge.id, {group,line,hit,edge});
-    }
-    for (const node of this.model.nodes) {
-      const pos = this.positionMap.get(node.id);
-      if (!pos) continue;
-      const group = svgEl('g', {class:`ew-node ew-kind-${node.kind}`, tabindex:'0', role:'button'});
-      const circle = svgEl('circle', {r:node.kind === 'center' ? 16 : node.kind === 'paper' ? 9.5 : 11, cx:0,cy:0});
-      const name = svgEl('text', {x:0,y:node.kind==='center'?31:25,'text-anchor':'middle'}, nodeLabel(node));
-      group.append(circle,name);
-      group.setAttribute('transform',`translate(${pos.x} ${pos.y})`);
-      group.setAttribute('aria-label', `论文节点：${node.title}。Enter 选中；双击打开原笔记。`);
-      group.appendChild(svgEl('title',{},node.title));
-      group.addEventListener('pointerenter',()=>this.hoverNode(node.id));
-      group.addEventListener('pointerleave',()=>this.exitHoverNode(node.id));
-      group.addEventListener('click',(event)=>{
-        event.stopPropagation();
-        if (this.dragInfo?.moved) return;
-        this.pinNode(node.id);
-      });
-      group.addEventListener('dblclick',event=>{event.stopPropagation();this.openNote(node.path);});
-      group.addEventListener('keydown',event=>{
-        if(event.key==='Enter'||event.key===' '){event.preventDefault(); this.pinNode(node.id);}
-      });
-      nodeLayer.appendChild(group);
-      this.nodeElements.set(node.id,{group,circle,name,node});
-    }
-    this.updateTransform();
-    this.updateFocus();
-    if (!this.model.nodes.length) {
-      const text = svgEl('text', {x:550,y:400,'text-anchor':'middle',class:'ew-blank-graph'},
-        '未发现论文节点，请在设置中检查项目目录。');
-      this.stage.appendChild(text);
-    }
-  }
-
-  hoverNode(id) {
-    clearTimeout(this.restoreTimer);
-    clearTimeout(this.hoverTimer);
-    this.hoverNodeId = id; this.hoverEdgeId = '';
-    this.updateFocus();
-    // Delayed paper preview on hover; avoids reading/loading a PDF for each pass-through.
-    if (id !== this.selectedNodeId) {
-      this.hoverTimer = setTimeout(() => {
-        if (this.hoverNodeId === id) this.showReader(id,null,true);
-      }, 430);
-    }
-  }
-  exitHoverNode(id) {
-    if (this.hoverNodeId !== id) return;
-    this.hoverNodeId = '';
-    clearTimeout(this.hoverTimer);
-    this.updateFocus();
-    this.restoreTimer = setTimeout(() => {
-      if (!this.hoverNodeId && this.selectedNodeId) this.showReader(this.selectedNodeId,this.getPinnedEdge(),false);
-    }, 550);
-  }
-  getPinnedEdge() { return this.model.edges.find(e=>e.id===this.selectedEdgeId) || null; }
-  pinNode(id) {
-    if (!this.nodeMap.has(id)) return;
-    clearTimeout(this.restoreTimer); clearTimeout(this.hoverTimer);
-    this.selectedNodeId = id; this.selectedEdgeId = '';
-    this.updateFocus();
-    void this.showReader(id,null,false);
-  }
-  pinEdge(id) {
-    const edge = this.model.edges.find(e=>e.id===id);
-    if (!edge) return;
-    clearTimeout(this.restoreTimer); clearTimeout(this.hoverTimer);
-    this.selectedEdgeId=id;
-    const focused = this.hoverNodeId || this.selectedNodeId;
-    // Prefer the paper endpoint over the central survey/overview node for PDF preview.
-    const right = this.nodeMap.get(edge.target), left = this.nodeMap.get(edge.source);
-    const paper = right?.kind==='paper' ? right : left?.kind==='paper' ? left : right || left;
-    if (paper) this.selectedNodeId=paper.id;
-    this.hoverNodeId=''; this.hoverEdgeId='';
-    this.updateFocus();
-    if (paper) void this.showReader(paper.id,edge,false,focused);
-  }
-
-  updateFocus() {
-    const focusId = this.hoverNodeId || this.selectedNodeId;
-    const selectedEdge = this.hoverEdgeId || this.selectedEdgeId;
-    const edges = this.visibleEdges();
-    const neighbors = new Set([focusId]);
-    const connected = edges.filter(e=>e.source===focusId||e.target===focusId);
-    for(const e of connected){neighbors.add(e.source);neighbors.add(e.target);}
-    if(selectedEdge){
-      const e=edges.find(item=>item.id===selectedEdge);
-      if(e){neighbors.add(e.source);neighbors.add(e.target);}
-    }
-    const matches = this.searchText ? new Set(this.model.nodes.filter(n=>
-      [n.id,n.title,n.basename].some(field=>field.toLocaleLowerCase().includes(this.searchText))
-    ).map(n=>n.id)) : null;
-    for(const [id,{group}] of this.nodeElements){
-      const dimByFocus=!!focusId&&!neighbors.has(id);
-      const dimBySearch=!!matches&&!matches.has(id)&&id!==focusId;
-      group.classList.toggle('is-dimmed', dimByFocus||dimBySearch);
-      group.classList.toggle('is-focused', id===focusId);
-      group.classList.toggle('is-adjacent', id!==focusId&&neighbors.has(id));
-      group.classList.toggle('is-search-match', !!matches&&matches.has(id));
-    }
-    for(const [id,{group,edge}] of this.edgeElements){
-      const near=edge.source===focusId||edge.target===focusId;
-      group.classList.toggle('is-dimmed', !near && id!==selectedEdge);
-      group.classList.toggle('is-highlighted', near);
-      group.classList.toggle('is-selected', id===selectedEdge);
-    }
-    this.renderEdgeSummaries(this.hoverNodeId || this.selectedNodeId);
-  }
-  renderEdgeSummaries(focus) {
-    this.labelLayer.replaceChildren();
-    if (!focus) return;
-    const connected = this.visibleEdges().filter(e=>e.source===focus||e.target===focus);
-    connected.forEach((e,i)=>{
-      const a=this.positionMap.get(e.source), b=this.positionMap.get(e.target);
-      if(!a||!b) return;
-      const labelText=shorten(directedSummary(e,focus),63);
-      const x=a.x*0.45+b.x*0.55;
-      const y=a.y*0.45+b.y*0.55;
-      const dx=b.x-a.x,dy=b.y-a.y,len=Math.max(1,Math.hypot(dx,dy));
-      const normalX=-dy/len,normalY=dx/len;
-      const side = i%2===0?1:-1;
-      const bx=x+normalX*(14+7*(i%3))*side;
-      const by=y+normalY*(14+7*(i%3))*side;
-      const width=clamp(labelText.length*6.6+20,95,418);
-      const label=svgEl('g',{class:`ew-summary-label ${e.kind==='wikilink'?'is-weak':''}`});
-      label.appendChild(svgEl('rect',{x:bx-width/2,y:by-15,width,height:29,rx:6}));
-      label.appendChild(svgEl('text',{x:bx,y:by+4,'text-anchor':'middle'},labelText));
-      label.appendChild(svgEl('title',{},directedSummary(e,focus)));
-      label.addEventListener('pointerenter',()=>{this.hoverEdgeId=e.id; this.updateEdgeLabelFocus();});
-      label.addEventListener('pointerleave',()=>{this.hoverEdgeId=''; this.updateEdgeLabelFocus();});
-      label.addEventListener('click',(event)=>{event.stopPropagation();this.pinEdge(e.id);});
-      this.labelLayer.appendChild(label);
-    });
-    this.updateEdgeLabelFocus();
-  }
-  updateEdgeLabelFocus() {
-    // Keep pointer-hover styling contained; do not recursively rebuild labels.
-    this.labelLayer.querySelectorAll('.ew-summary-label').forEach(el=>el.classList.remove('is-hovered'));
-    const current=this.labelLayer.querySelector('.ew-summary-label:hover');
-    if(current) current.classList.add('is-hovered');
-  }
-  installInteractions(workbench) {
-    const svg=this.svg;
-    const viewPoint=(event)=>{
-      const bounds=svg.getBoundingClientRect();
-      return {x:(event.clientX-bounds.left)*1100/Math.max(1,bounds.width),
-        y:(event.clientY-bounds.top)*800/Math.max(1,bounds.height)};
+  mount(onNodeClicked, currentLock) {
+    if (this.installed) return;
+    const r = this.renderer;
+    const original = this.originalClick;
+    this.patchedClick = function(event, id, type) {
+      if (onNodeClicked(event, id, type)) return;
+      return original.call(r, event, id, type);
     };
-    svg.addEventListener('wheel', event=>{
-      event.preventDefault();
-      const p=viewPoint(event);
-      const beforeX=(p.x-this.panX)/this.scale, beforeY=(p.y-this.panY)/this.scale;
-      this.scale=clamp(this.scale*(event.deltaY<0?1.1:0.91),0.47,3.6);
-      this.panX=p.x-beforeX*this.scale; this.panY=p.y-beforeY*this.scale;
-      this.updateTransform();
-    },{passive:false});
-    svg.addEventListener('pointerdown',event=>{
-      if(event.button!==0) return;
-      const nodeElement=event.target.closest('.ew-node');
-      const id=nodeElement ? [...this.nodeElements].find(([,o])=>o.group===nodeElement)?.[0] : null;
-      const point=viewPoint(event);
-      this.dragInfo={id,mode:id?'node':'pan',moved:false,from:point,
-        startPanX:this.panX,startPanY:this.panY,
-        startPosition:id?{...this.positionMap.get(id)}:null};
-      svg.setPointerCapture(event.pointerId);
-    });
-    svg.addEventListener('pointermove',event=>{
-      const d=this.dragInfo;
-      if(!d) return;
-      const point=viewPoint(event),dx=point.x-d.from.x,dy=point.y-d.from.y;
-      if(Math.abs(dx)+Math.abs(dy)>5)d.moved=true;
-      if(!d.moved) return;
-      if(d.mode==='pan'){
-        this.panX=d.startPanX+dx; this.panY=d.startPanY+dy;this.updateTransform();
-      }else if(d.id){
-        const pos=this.positionMap.get(d.id);
-        pos.x=d.startPosition.x+dx/this.scale;
-        pos.y=d.startPosition.y+dy/this.scale;
-        this.moveNodeElement(d.id);
-      }
-    });
-    const end=()=>{
-      const wasMoved=this.dragInfo?.moved;
-      const selected=this.dragInfo?.id;
-      this.dragInfo=null;
-      if(wasMoved && selected) this.updateFocus();
+    r.onNodeClick = this.patchedClick;
+    const getOld = this.originalGetHighlight;
+    this.patchedGetHighlight = function() {
+      const node = currentLock();
+      if (node) return node;
+      return typeof getOld === 'function' ? getOld.call(r) : (r.highlightNode || null);
     };
-    svg.addEventListener('pointerup',end);
-    svg.addEventListener('pointercancel',end);
-    this.resizer.addEventListener('pointerdown',event=>{
-      if(event.button!==0) return;
-      const box=workbench.getBoundingClientRect();
-      this.resizer.setPointerCapture(event.pointerId);
-      const onMove=(ev)=>{
-        const pct=100*(box.right-ev.clientX)/Math.max(1,box.width);
-        this.reader.style.width=`${clamp(pct,26,70)}%`;
-      };
-      const onUp=async()=>{
-        this.resizer.removeEventListener('pointermove',onMove);
-        this.resizer.removeEventListener('pointerup',onUp);
-        this.resizer.removeEventListener('pointercancel',onUp);
-        this.plugin.settings.graphReaderWidth=parseFloat(this.reader.style.width);
-        await this.plugin.saveSettings();
-      };
-      this.resizer.addEventListener('pointermove',onMove);
-      this.resizer.addEventListener('pointerup',onUp);
-      this.resizer.addEventListener('pointercancel',onUp);
-    });
+    r.getHighlightNode = this.patchedGetHighlight;
+    this.installed = true;
   }
-  moveNodeElement(id) {
-    const node=this.nodeElements.get(id),position=this.positionMap.get(id);
-    if(!node||!position)return;
-    node.group.setAttribute('transform',`translate(${position.x} ${position.y})`);
-    for(const {edge,line,hit} of this.edgeElements.values()){
-      if(edge.source!==id&&edge.target!==id)continue;
-      const a=this.positionMap.get(edge.source),b=this.positionMap.get(edge.target);
-      for(const el of [line,hit]){
-        el.setAttribute('x1',a.x);el.setAttribute('y1',a.y);
-        el.setAttribute('x2',b.x);el.setAttribute('y2',b.y);
-      }
+  unmount() {
+    if (!this.installed) return;
+    const r = this.renderer;
+    if (r.onNodeClick === this.patchedClick) r.onNodeClick = this.originalClick;
+    if (r.getHighlightNode === this.patchedGetHighlight) {
+      if (this.originalGetHighlight === undefined) delete r.getHighlightNode;
+      else r.getHighlightNode = this.originalGetHighlight;
     }
-    this.renderEdgeSummaries(this.hoverNodeId||this.selectedNodeId);
+    this.installed = false;
+    this.repaint();
   }
-
-  async readPaper(node) {
-    if (this.noteCache.has(node.path)) return this.noteCache.get(node.path);
-    const file=this.app.vault.getAbstractFileByPath(node.path);
-    if(!file||file.extension!=='md') return '';
-    const content=await this.app.vault.cachedRead(file);
-    this.noteCache.set(node.path,content);
-    return content;
+  getNativeHoveredNode() { return this.renderer.highlightNode || null; }
+  getNode(id) { return this.renderer.nodeLookup?.[id] || null; }
+  getLinks() { return this.renderer.links || []; }
+  getContainer() { return this.renderer.containerEl; }
+  repaint() { try { this.renderer.changed(); } catch (_) {} }
+  screenPosition(node) {
+    if (!node || !Number.isFinite(node.x) || !Number.isFinite(node.y)) return null;
+    const r = this.renderer;
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    return { x: (node.x * r.scale + r.panX) / dpr,
+      y: (node.y * r.scale + r.panY) / dpr };
   }
-  localPdf(node) {
-    const requested=node.pdfPath.replace(/^\[\[|\]\]$/g,'').split('#')[0];
-    if(!requested)return null;
-    const raw=this.app.vault.getAbstractFileByPath(requested);
-    if(raw?.extension==='pdf')return raw;
-    const linked=this.app.metadataCache.getFirstLinkpathDest(requested,node.path);
-    return linked?.extension==='pdf'?linked:null;
+  getNodeRadius(node) {
+    const r = this.renderer;
+    return Math.max(5, Math.min(30,
+      (Math.sqrt(Math.max(1, node?.weight || 1)) * Math.max(1, r.nodeScale || 1)
+        * Math.max(0.1, r.scale)) / Math.max(1, window.devicePixelRatio || 1)));
   }
-  async resolveEvidence(relation) {
-    const evidence={...relation.evidence};
-    if (evidence.note && evidence.block) {
-      const file=this.app.vault.getAbstractFileByPath(evidence.note);
-      if(file?.extension==='md'){
-        const source=await this.app.vault.cachedRead(file);
-        const extra=extractLegacyEvidence(source,evidence.block);
-        // Existing structured evidence wins over fallback extraction.
-        for(const [key,value] of Object.entries(extra)) if(!evidence[key]&&value)evidence[key]=value;
-      }
+  isNearNode(x, y, radiusExtra = 9) {
+    for (const node of Object.values(this.renderer.nodeLookup || {})) {
+      const p = this.screenPosition(node);
+      if (!p) continue;
+      if (Math.hypot(p.x-x, p.y-y) <= this.getNodeRadius(node)+radiusExtra) return true;
     }
-    return evidence;
-  }
-  renderEmptyReader(message='悬停或点击论文节点，开始阅读原文与核对关系证据。') {
-    this.readerHeader.replaceChildren();this.pdfPanel.replaceChildren();
-    this.evidencePanel.replaceChildren();this.relationsPanel.replaceChildren();
-    dom('div','ew-empty',this.pdfPanel,message);
-  }
-  disposePdf(){
-    if(this.pdfComponent){
-      try {this.removeChild(this.pdfComponent);} catch {this.pdfComponent.unload?.();}
-      this.pdfComponent=null;
-    }
-  }
-  async showReader(id, relation = null, transient = false, viewpoint = '') {
-    const node=this.nodeMap.get(id);
-    if(!node)return;
-    const seq=++this.readerSeq;
-    let note=''; let evidence={};
-    try {
-      note=await this.readPaper(node);
-      if(relation) evidence=await this.resolveEvidence(relation);
-    }catch(err){console.warn('[EvidenceWeave] Read paper/evidence failed',err);}
-    if(seq!==this.readerSeq)return;
-    this.disposePdf();
-    this.readerHeader.replaceChildren();this.pdfPanel.replaceChildren();
-    this.evidencePanel.replaceChildren();this.relationsPanel.replaceChildren();
-    const title=dom('div','ew-paper-heading',this.readerHeader);
-    dom('div','ew-overline',title,transient?'悬停预览 · 点击锁定':'论文阅读 · 证据核对');
-    dom('h3','',title,node.title);
-    if(node.zoteroKey)dom('div','ew-subline',title,`Zotero · ${node.zoteroKey}`);
-    const actions=dom('div','ew-actions',this.readerHeader);
-    btn(actions,'打开笔记',()=>this.openNote(node.path));
-    if(node.zoteroKey){
-      btn(actions,'Zotero',()=>{
-        // Obsidian already has the user's item key; no Zotero API/MCP required.
-        const uri=`zotero://select/library/items/${encodeURIComponent(node.zoteroKey)}`;
-        window.open(uri,'_blank');
-      });
-    }
-    const pdf=this.localPdf(node);
-    const remote=evidence.pdfUrl||node.pdfUrl||discoverPdfUrl(note,node);
-    const url=remote || node.sourceUrl;
-    if(url)btn(actions,remote?'浏览器打开 PDF':'论文来源',()=>openUrl(url));
-    const viewport=dom('div','ew-pdf-viewport',this.pdfPanel);
-    const caption=dom('div','ew-viewport-title',viewport,
-      pdf?'Vault 内 PDF · Obsidian 内置阅读器':remote?'在线 PDF · 若被出版社限制，请点击浏览器打开':'原文阅读区');
-    if(pdf){
-      const embed=dom('div','ew-native-pdf',viewport);
-      try {
-        const { Component }=require('obsidian');
-        const child=new Component();
-        this.addChild(child); this.pdfComponent=child;
-        const page=Number(evidence.page);
-        const reference=`${pdf.path}${Number.isInteger(page)&&page>0?'#page='+page:''}`;
-        await MarkdownRenderer.render(this.app,`![[${reference}]]`,embed,node.path,child);
-      }catch(err){
-        console.warn('[EvidenceWeave] Native PDF embed failed',err);
-        dom('p','ew-empty',viewport,'内嵌 PDF 无法渲染。请在 Obsidian 文件浏览器打开该 PDF。');
-      }
-    } else if(remote&&this.plugin.settings.previewRemotePdfs){
-      const iframe=dom('iframe','ew-remote-pdf',viewport);
-      iframe.title=`PDF: ${node.title}`;
-      iframe.loading='lazy';iframe.referrerPolicy='no-referrer';
-      const pdfUrl=new URL(remote);
-      if(evidence.page)pdfUrl.hash=`page=${evidence.page}`;
-      // A remote PDF is explicitly user-authored in the local note. Never eval or inject its content.
-      iframe.src=pdfUrl.href;
-      dom('div','ew-pdf-help',viewport,'在线 PDF 若空白，通常是出版商禁止内嵌；可使用上方“浏览器打开 PDF”。');
-    } else if(remote) {
-      dom('div','ew-empty',viewport,'已找到在线 PDF。设置中启用在线预览，或点击上方浏览器链接查看。');
-    } else {
-      dom('div','ew-empty',viewport,'未找到本地 pdf_path 或可直接预览的 PDF 链接。');
-      if(node.sourceUrl)btn(viewport,'打开正式论文来源',()=>openUrl(node.sourceUrl));
-    }
-    if(seq!==this.readerSeq)return;
-    this.renderEvidence(node,relation,evidence,viewpoint||node.id);
-    this.renderRelations(node);
-  }
-  renderEvidence(node, relation, evidence, viewpoint) {
-    const section=dom('section','ew-evidence-card',this.evidencePanel);
-    if (!relation) {
-      dom('div','ew-section-heading',section,'关系证据');
-      dom('p','ew-muted',section,'点击图中的连线或下方关系条目，查看关系依据、原文短引及 PDF 页码。');
-      return;
-    }
-    const header=dom('div','ew-evidence-top',section);
-    dom('strong','',header,relation.id);
-    dom('span',`ew-status ew-status-${relation.status}`,header,statusLabel(relation.status));
-    dom('div','ew-relationship-type',section,`关系类型：${relation.type} · ${relation.kind==='wikilink'?'未经审查的笔记双链':'结构化或已整理的文献关系'}`);
-    dom('p','ew-evidence-summary',section,directedSummary(relation,viewpoint));
-    if(evidence.sourceNote)dom('p','ew-evidence-location',section,`引用关系整理端：${evidence.sourceNote}`);
-    if(evidence.note)dom('p','ew-evidence-location',section,`被引论文证据端：${evidence.note}${evidence.block?'#^'+evidence.block:''}`);
-    if(evidence.section)dom('p','ew-evidence-location',section,evidence.section);
-    if(evidence.page)dom('p','ew-evidence-location',section,`PDF 第 ${evidence.page} 页（来源文档记录，尚需人工核对版本）`);
-    if(evidence.quote){
-      dom('div','ew-evidence-quote-label',section,'原文短引（来自笔记记录）');
-      dom('blockquote','ew-quote',section,evidence.quote);
-    }
-    if(relation.status !== 'reviewed') {
-      dom('p','ew-review-warning',section,'此状态不代表已核验全部实验配置、论文结论或技术继承。');
-    }
-    const buttons=dom('div','ew-evidence-actions',section);
-    if(evidence.note){
-      btn(buttons,'跳到证据笔记',()=>this.openEvidence(evidence.note,evidence.block));
-    }
-    if(evidence.pdfUrl){
-      const candidate=new URL(evidence.pdfUrl);
-      if(evidence.page)candidate.hash=`page=${evidence.page}`;
-      btn(buttons,'在浏览器核对原文页',()=>openUrl(candidate.href));
-    }
-  }
-  renderRelations(node) {
-    const head=dom('div','ew-section-heading',this.relationsPanel,'从当前论文视角看关联');
-    const related=this.visibleEdges().filter(e=>e.source===node.id||e.target===node.id);
-    dom('span','ew-relations-count',head,`${related.length}`);
-    if(!related.length){dom('p','ew-muted',this.relationsPanel,'此节点尚无已记录的关系边。');return;}
-    for(const relation of related){
-      const other=this.nodeMap.get(relation.source===node.id?relation.target:relation.source);
-      const card=dom('button','ew-relation-item',this.relationsPanel);
-      card.type='button';
-      if(relation.id===this.selectedEdgeId)card.classList.add('is-active');
-      const headline=dom('div','ew-relation-head',card);
-      dom('strong','',headline,other?.basename||'未知节点');
-      dom('small','',headline,relation.kind==='wikilink'?'未核双链':relation.type);
-      dom('p','',card,directedSummary(relation,node.id));
-      card.addEventListener('click',()=>this.pinEdge(relation.id));
-    }
-  }
-  async openNote(path) {
-    const file=this.app.vault.getAbstractFileByPath(path);
-    if(file?.extension!=='md')return;
-    const leaf=this.app.workspace.getLeaf('tab');
-    await leaf.openFile(file);
-  }
-  async openEvidence(path,block) {
-    const target=block?`${path}#^${block.replace(/^\^/,'')}`:path;
-    await this.app.workspace.openLinkText(target,path,'tab');
+    return false;
   }
 }
 
-class EvidenceWeaveSettingsTab extends PluginSettingTab {
+
+/* EvidenceWeave, a lightweight overlay on Obsidian's ORIGINAL graph.
+ * Never draws/rearranges nodes or connections and never creates new notes.
+ */
+'use strict';
+const ewEl=(tag,klass,parent,content)=>{
+  const el=document.createElement(tag);
+  if (klass) el.className=klass;
+  if (content!==undefined) el.textContent=String(content);
+  if (parent) parent.appendChild(el);
+  return el;
+};
+const ewIsPdfLink=url=>/\.pdf(?:[?#]|$)/i.test(url||'');
+const ewIsPdfFile=file=>!!(file&&file.extension==='pdf');
+const ewPair=(a,b)=>[a,b].sort().join('\n');
+
+/** Resolve EXACTLY the edge Obsidian actually renders. Never make synthetic edges. */
+function matchNativeRelation(sourcePath,targetPath,model,overviewPath) {
+  const nodeByPath=new Map(model.nodes.map(n=>[n.path,n]));
+  const a=nodeByPath.get(sourcePath),b=nodeByPath.get(targetPath);
+  const matches=[];
+  if(a&&b){
+    for(const rel of model.edges){
+      if(rel.kind==='wikilink') continue;
+      if(ewPair(rel.source,rel.target)===ewPair(a.id,b.id)) matches.push({relation:rel,proxy:false});
+    }
+  }
+  // INSES/M00 notes describe C00→Pxx relationships, while the native graph
+  // actually draws M00→Pxx because M00 contains those wikilinks.
+  const otherPath=sourcePath===overviewPath?targetPath:targetPath===overviewPath?sourcePath:'';
+  const targetNode=nodeByPath.get(otherPath);
+  if(targetNode){
+    for(const rel of model.edges){
+      if(rel.kind==='overview' && rel.storage?.note===overviewPath && rel.target===targetNode.id &&
+          !matches.some(m=>m.relation.id===rel.id)) matches.push({relation:rel,proxy:true});
+    }
+  }
+  return matches;
+}
+function viewpointForNativeRelation(focusPath,relation,nodeByPath,overviewPath) {
+  if(focusPath===overviewPath&&relation.kind==='overview') return relation.source;
+  const node=nodeByPath.get(focusPath);
+  if(!node) return '';
+  return node.id===relation.source || node.id===relation.target ? node.id : '';
+}
+function nodeFromGraphPath(path,model){return model.nodes.find(n=>n.path===path)||null;}
+function isFileGraphNode(id){return typeof id==='string' && id.endsWith('.md');}
+
+class NativeGraphBinding {
+  constructor(plugin,leaf,renderer) {
+    this.plugin=plugin;this.leaf=leaf;
+    this.adapter=new NativeGraphAdapter(renderer);
+    this.lockedPath='';this.focusPath='';this.labels=[];
+    this.destroyed=false;this.editing=null;this.seq=0;this.pdfKey='';
+    this.isInPopup=false;this.pointerInGraph=false;
+    this.lastNodePoint=null;this.rafId=0;this.refreshTimers=[];this.down=null;
+    this.pdfComponent=null;
+    this.onDown=e=>this.handlePointerDown(e);
+    this.onUp=e=>this.handlePointerUp(e);
+    this.onEnter=()=>{this.pointerInGraph=true;};
+    this.onLeave=e=>{if(!this.popup?.contains(e.relatedTarget))this.pointerInGraph=false;};
+  }
+  attach(){
+    const host=this.adapter.getContainer();
+    if(!host || this.destroyed) return;
+    this.previousInlinePosition=host.style.position;
+    if(getComputedStyle(host).position==='static')host.style.position='relative';
+    this.overlay=ewEl('div','ew-native-overlay',host);
+    this.overlay.setAttribute('aria-label','EvidenceWeave 原生图谱关系增强');
+    this.labelLayer=ewEl('div','ew-native-label-layer',this.overlay);
+    this.popup=ewEl('section','ew-native-pdf',this.overlay);
+    this.popup.hidden=true;
+    this.popup.setAttribute('aria-label','原文 PDF 快速预览');
+    this.popup.addEventListener('pointerenter',()=>{this.isInPopup=true;});
+    this.popup.addEventListener('pointerleave',()=>{this.isInPopup=false;});
+    host.addEventListener('pointerdown',this.onDown,true);
+    host.addEventListener('pointerup',this.onUp,true);
+    host.addEventListener('pointerenter',this.onEnter);
+    host.addEventListener('pointerleave',this.onLeave);
+    this.adapter.mount((event,id,type)=>this.onNodeClick(event,id,type),()=>this.lockedPath?this.adapter.getNode(this.lockedPath):null);
+    this.rafId=requestAnimationFrame(()=>this.tick());
+  }
+  detach(){
+    if(this.destroyed)return;
+    this.destroyed=true;
+    cancelAnimationFrame(this.rafId);this.clearRepaintTimers();
+    this.disposePdfComponent();
+    const host=this.adapter.getContainer();
+    host?.removeEventListener('pointerdown',this.onDown,true);
+    host?.removeEventListener('pointerup',this.onUp,true);
+    host?.removeEventListener('pointerenter',this.onEnter);
+    host?.removeEventListener('pointerleave',this.onLeave);
+    if(host && this.previousInlinePosition!==undefined)host.style.position=this.previousInlinePosition;
+    this.adapter.unmount();
+    this.overlay?.remove();
+    this.overlay=null;
+  }
+  onNodeClick(event,id,type){
+    if(!isFileGraphNode(id)||!this.plugin.isScopedPath(id))return false;
+    // Cmd/Ctrl+Click continues to use Obsidian's native open-note behavior.
+    if(event?.metaKey||event?.ctrlKey||event?.shiftKey||event?.altKey)return false;
+    if(event && event.button!==undefined && event.button!==0)return false;
+    this.lock(id);
+    return true;
+  }
+  lock(path){
+    this.lockedPath=path;
+    this.pointerInGraph=true;
+    this.setFocus(path);
+    this.adapter.repaint();
+    this.clearRepaintTimers();
+    for(const delay of [40,120,290,550])this.refreshTimers.push(setTimeout(()=>{
+      if(!this.destroyed&&this.lockedPath)this.adapter.repaint();
+    },delay));
+  }
+  clearRepaintTimers(){for(const t of this.refreshTimers)clearTimeout(t);this.refreshTimers=[];}
+  disposePdfComponent(){
+    if(this.pdfComponent){try{this.plugin.removeChild(this.pdfComponent);}catch(_){this.pdfComponent.unload?.();}this.pdfComponent=null;}
+  }
+  unlock(){
+    this.clearRepaintTimers();
+    this.lockedPath='';
+    this.isInPopup=false;
+    this.adapter.renderer.highlightNode=null;
+    // A stale PIXI hit-test must not immediately restore the old hover state.
+    this.adapter.renderer.mouseX=-1e9;
+    this.adapter.renderer.mouseY=-1e9;
+    this.setFocus('');
+    this.adapter.repaint();
+  }
+  handlePointerDown(e){
+    if(e.button!==0 || e.target?.closest?.('.ew-native-pdf,.ew-native-edge-label')){this.down=null;return;}
+    const bounds=this.adapter.getContainer().getBoundingClientRect();
+    const x=e.clientX-bounds.left,y=e.clientY-bounds.top;
+    this.down={x,y,button:e.button,nearNode:this.adapter.isNearNode(x,y)};
+  }
+  handlePointerUp(e){
+    const down=this.down;this.down=null;
+    if(!down || !this.lockedPath || e.button!==0 || e.target?.closest?.('.ew-native-pdf,.ew-native-edge-label'))return;
+    const bounds=this.adapter.getContainer().getBoundingClientRect();
+    const x=e.clientX-bounds.left,y=e.clientY-bounds.top;
+    // Do not interpret pan/drag or a nearby node click as an empty-space click.
+    if(Math.hypot(x-down.x,y-down.y)>7 || down.nearNode || this.adapter.isNearNode(x,y))return;
+    this.unlock();
+  }
+  tick(){
+    if(this.destroyed)return;
+    const host=this.adapter.getContainer();
+    if(!host?.isConnected){this.setFocus('');}
+    else {
+      const hover=this.adapter.getNativeHoveredNode();
+      let wanted='';
+      if(this.lockedPath)wanted=this.lockedPath;
+      else if(this.editing||this.isInPopup)wanted=this.focusPath;
+      else if(this.pointerInGraph&&hover&&isFileGraphNode(hover.id))wanted=hover.id;
+      if(wanted&&!this.plugin.isScopedPath(wanted))wanted='';
+      if(wanted!==this.focusPath)this.setFocus(wanted);
+      if(this.focusPath){this.updatePositions();this.placePdf();}
+    }
+    this.rafId=requestAnimationFrame(()=>this.tick());
+  }
+  setFocus(path){
+    if(path===this.focusPath)return;
+    if(this.editing)this.cancelEdit();
+    this.focusPath=path;
+    this.seq++;
+    this.renderEdgeLabels();
+    this.updatePdf(path);
+  }
+  nativeFocusLinks(){
+    const focus=this.focusPath;
+    return focus?this.adapter.getLinks().filter(link=>{
+      const a=typeof link.source==='string'?link.source:link.source?.id;
+      const b=typeof link.target==='string'?link.target:link.target?.id;
+      return a===focus||b===focus;
+    }):[];
+  }
+  renderEdgeLabels(){
+    this.labelLayer?.replaceChildren();this.labels=[];
+    if(!this.focusPath||!this.plugin.model)return;
+    const m=this.plugin.model;
+    const byPath=new Map(m.nodes.map(n=>[n.path,n]));
+    for(const link of this.nativeFocusLinks()){
+      const a=typeof link.source==='string'?link.source:link.source?.id;
+      const b=typeof link.target==='string'?link.target:link.target?.id;
+      const refs=matchNativeRelation(a,b,m,this.plugin.settings.overviewPath);
+      if(!refs.length)continue;
+      // Native graph might collapse duplicate relations to one physical line.
+      // Display the first without claiming the others are identical.
+      const {relation,proxy}=refs[0];
+      const viewpoint=viewpointForNativeRelation(this.focusPath,relation,byPath,this.plugin.settings.overviewPath);
+      if(!viewpoint)continue;
+      const summary=directedSummary(relation,viewpoint);
+      if(!summary)continue;
+      const btn=ewEl('button','ew-native-edge-label',this.labelLayer,shorten(summary,this.plugin.settings.labelMaxChars));
+      btn.type='button';btn.title=summary;
+      btn.setAttribute('aria-label',`编辑 ${relation.id} 关系：${summary}`);
+      btn.setAttribute('data-relation-id',relation.id);
+      btn.addEventListener('pointerdown',ev=>ev.stopPropagation());
+      btn.addEventListener('click',ev=>{ev.stopPropagation();this.startEdit({button:btn,relation,viewpoint,summary});});
+      this.labels.push({element:btn,link,relation,viewpoint,proxy});
+    }
+  }
+  updatePositions(){
+    const host=this.adapter.getContainer();
+    const bounds=host?.getBoundingClientRect();
+    if(!bounds)return;
+    for(const label of this.labels){
+      const source=typeof label.link.source==='string'?this.adapter.getNode(label.link.source):label.link.source;
+      const target=typeof label.link.target==='string'?this.adapter.getNode(label.link.target):label.link.target;
+      const coords=labelPosition(this.adapter.screenPosition(source),this.adapter.screenPosition(target));
+      if(!coords) {label.element.hidden=true;continue;}
+      const visible=coords.x>-5&&coords.x<bounds.width+5&&coords.y>-5&&coords.y<bounds.height+5;
+      label.element.hidden=!visible;
+      label.element.style.left=`${coords.x}px`;
+      label.element.style.top=`${coords.y}px`;
+      label.element.style.setProperty('--ew-rotation',`${coords.angle}rad`);
+      if(this.editing?.button===label.element){
+        this.editing.input.style.left=`${coords.x}px`;
+        this.editing.input.style.top=`${coords.y}px`;
+      }
+    }
+  }
+  startEdit(item){
+    if(!this.lockedPath){
+      // Editing needs a stable focus; clicking a label locks its existing node.
+      this.lock(this.focusPath);
+    }
+    if(this.editing)return;
+    const button=item.button;
+    const input=ewEl('input','ew-native-edge-editor',null);
+    input.type='text';input.maxLength=400;input.value=item.summary;
+    input.setAttribute('aria-label','修改关系说明，回车保存，Esc 取消');
+    button.replaceWith(input);
+    input.style.cssText=button.style.cssText;
+    input.style.setProperty('--ew-rotation','0rad');
+    this.editing={...item,input,button, saving:false};
+    input.addEventListener('pointerdown',e=>e.stopPropagation());
+    input.addEventListener('keydown',e=>{
+      if(e.key==='Escape'){e.preventDefault();e.stopPropagation();this.cancelEdit();}
+      if(e.key==='Enter'){e.preventDefault();e.stopPropagation();void this.commitEdit();}
+    });
+    input.addEventListener('blur',()=>{if(!this.editing?.saving)this.cancelEdit();});
+    input.focus();input.select();
+  }
+  cancelEdit(){
+    if(!this.editing)return;
+    const e=this.editing;
+    this.editing=null;
+    e.input?.replaceWith(e.button);
+  }
+  async commitEdit(){
+    const e=this.editing;
+    if(!e||e.saving)return;
+    e.saving=true;
+    try {
+      const next=validateSummary(e.input.value);
+      if(next===e.summary){this.cancelEdit();return;}
+      const storage=e.relation.storage;
+      if(!storage?.note || !this.plugin.isScopedPath(storage.note))throw new Error('来源路径超出授权范围');
+      const file=this.plugin.app.vault.getAbstractFileByPath(storage.note);
+      if(!file||file.extension!=='md')throw new Error('原关系笔记不存在');
+      if(e.relation.kind==='overview'&&storage.note!==this.plugin.settings.overviewPath)
+        throw new Error('概览路径和配置不一致');
+      const vault=this.plugin.app.vault;
+      // Vault.process provides local serialized writes. Source-line or YAML guards
+      // reject stale edits before modifying an asynchronously synchronized file.
+      await vault.process(file,contents=>{
+        if(e.relation.kind==='overview')return patchOverviewSummary(contents,e.relation,e.viewpoint,next);
+        if(e.relation.kind==='typed')return patchTypedSummary(contents,e.relation,e.viewpoint,next,parseYaml);
+        throw new Error('普通双链没有可写入的学术语义');
+      });
+      this.editing=null;
+      e.input.replaceWith(e.button);
+      new Notice('EvidenceWeave：关系已写回笔记，标记为待复核');
+      await this.plugin.refreshModel();
+    }catch(error){
+      new Notice(`EvidenceWeave：未保存，${error.message||String(error)}`);
+      this.editing=null;
+      e.input?.replaceWith(e.button);
+    }
+  }
+  async updatePdf(path){
+    this.pdfKey='';
+    this.disposePdfComponent();
+    if(!this.popup)return;
+    this.popup.hidden=true;
+    this.popup.replaceChildren();
+    if(!path)return;
+    const node=nodeFromGraphPath(path,this.plugin.model||{nodes:[]});
+    if(!node||node.kind!=='paper'&&node.kind!=='center')return;
+    const seq=++this.seq;
+    try {
+      const file=node.file;
+      const text=await this.plugin.app.vault.cachedRead(file);
+      if(this.destroyed||seq!==this.seq||this.focusPath!==path)return;
+      let local=null;
+      if(node.pdfPath){
+        const resolved=this.plugin.app.metadataCache.getFirstLinkpathDest?.(node.pdfPath,node.path)
+            ||this.plugin.app.vault.getAbstractFileByPath(node.pdfPath);
+        if(ewIsPdfFile(resolved))local=resolved;
+      }
+      const remote=discoverPdfUrl(text,{pdf_url:node.pdfUrl});
+      if(!local&&!remote)return; // No PDF? NO FLOATING RECTANGLE.
+      this.pdfKey=path;
+      this.popup.hidden=false;
+      const head=ewEl('header','ew-native-pdf-header',this.popup);
+      ewEl('div','ew-native-pdf-name',head,shorten(node.title,54));
+      const actions=ewEl('div','ew-native-pdf-actions',head);
+      const body=ewEl('div','ew-native-pdf-body',this.popup);
+      let scale=1;
+      const makeBtn=(txt,title,fn)=>{
+        const el=ewEl('button','ew-native-pdf-action',actions,txt);
+        el.type='button';el.title=title;el.addEventListener('click',fn);return el;
+      };
+      makeBtn('−','缩小 PDF',()=>{scale=Math.max(.75,scale-.15);body.style.zoom=String(scale);});
+      makeBtn('＋','放大 PDF',()=>{scale=Math.min(2.5,scale+.15);body.style.zoom=String(scale);});
+      makeBtn('×','关闭预览',()=>{this.popup.hidden=true;this.pdfKey='';});
+      if(local){
+        // Native Markdown PDF embed; keeps Obsidian's own PDF scrolling/zoom toolbar.
+        const component=new Component();
+        this.plugin.addChild(component);this.pdfComponent=component;
+        await MarkdownRenderer.render(this.plugin.app,`![[${local.path}]]`,body,node.path,component);
+      }else {
+        const frame=ewEl('iframe','ew-native-pdf-frame',body);
+        frame.src=remote;
+        frame.title=`论文 PDF：${node.title}`;
+        frame.setAttribute('loading','lazy');
+        frame.setAttribute('referrerpolicy','no-referrer');
+                frame.setAttribute('aria-label','PDF 外部文档预览');
+        makeBtn('↗','在浏览器打开 PDF',()=>window.open(remote,'_blank','noopener,noreferrer'));
+      }
+      this.placePdf();
+    }catch(err){
+      if(seq!==this.seq)return;
+      console.warn('[EvidenceWeave] PDF preview skipped',err);
+      this.popup.hidden=true;
+      this.pdfKey='';
+    }
+  }
+  placePdf(){
+    if(!this.popup||this.popup.hidden||!this.focusPath||this.pdfKey!==this.focusPath)return;
+    const graphNode=this.adapter.getNode(this.focusPath);
+    const point=this.adapter.screenPosition(graphNode);
+    const host=this.adapter.getContainer();
+    const rect=host?.getBoundingClientRect();
+    if(!rect||!point)return;
+    const box=placePdfByNode(point,{width:rect.width,height:rect.height},this.plugin.settings.pdfWidth,this.plugin.settings.pdfHeight);
+    if(!box){this.popup.hidden=true;return;}
+    this.popup.style.left=`${box.x}px`;
+    this.popup.style.top=`${box.y}px`;
+    this.popup.style.width=`${box.width}px`;
+    this.popup.style.height=`${box.height}px`;
+    this.popup.dataset.side=box.side;
+  }
+  onModelUpdated(){
+    this.renderEdgeLabels();
+    if(this.lockedPath&&!this.plugin.isScopedPath(this.lockedPath))this.unlock();
+    else if(this.focusPath){this.seq++;this.updatePdf(this.focusPath);}
+  }
+}
+
+
+/* EvidenceWeave v0.3 — unobtrusive enhancements to the NATIVE Graph View.
+ * No ItemView, no graph drawing, no R2/Cloud/MCP, no automatic Vault mutation.
+ */
+'use strict';
+const {Plugin,PluginSettingTab,Setting,Notice,MarkdownRenderer,Component,parseYaml}=require('obsidian');
+const NODE_KINDS=new Set(['paper','concept','method','dataset','question','center']);
+const DEFAULT_SETTINGS=Object.freeze({
+  projectFolder:'INSES',overviewPath:'INSES/M00-关系总览.md',
+  pdfWidth:330,pdfHeight:450,labelMaxChars:56,
+});
+
+class EvidenceWeaveSettings extends PluginSettingTab{
   constructor(app,plugin){super(app,plugin);this.plugin=plugin;}
   display(){
     const {containerEl}=this;containerEl.empty();
-    containerEl.createEl('h2',{text:'EvidenceWeave · 笔记与 PDF 工作台'});
-    containerEl.createEl('p',{text:'仅读取本地 Vault，不连接 MCP、不上传文件，也不会改动你的论文笔记。'});
-    new Setting(containerEl).setName('项目目录')
-      .setDesc('默认 INSES；留空则索引整个 Vault 的已标记节点。')
-      .addText(text=>text.setPlaceholder('INSES').setValue(this.plugin.settings.projectFolder)
-        .onChange(async value=>{this.plugin.settings.projectFolder=cleanFolder(value);await this.plugin.saveSettings();}));
-    new Setting(containerEl).setName('已有关系总览笔记')
-      .setDesc('读取 M00 中带 R-Pxx-01 证据锚点的一行说明；没有时可使用类型化关系笔记。')
-      .addText(text=>text.setValue(this.plugin.settings.overviewPath)
-        .onChange(async value=>{this.plugin.settings.overviewPath=str(value);await this.plugin.saveSettings();}));
-    new Setting(containerEl).setName('显示未经核验的普通双链')
-      .setDesc('将 Obsidian 双链绘成灰色虚线；绝不作为已证明的论文关系。')
-      .addToggle(toggle=>toggle.setValue(this.plugin.settings.showUnverifiedLinks)
-        .onChange(async value=>{this.plugin.settings.showUnverifiedLinks=value;await this.plugin.saveSettings();}));
-    new Setting(containerEl).setName('在线 PDF 预览')
-      .setDesc('打开/悬停选中含 PDF URL 的论文时，会连接来源网站；某些出版社不允许内嵌。')
-      .addToggle(toggle=>toggle.setValue(this.plugin.settings.previewRemotePdfs)
-        .onChange(async value=>{this.plugin.settings.previewRemotePdfs=value;await this.plugin.saveSettings();}));
-    containerEl.createEl('p',{text:'修改目录或关系来源后，回到 EvidenceWeave 点击「刷新」即可。'});
+    containerEl.createEl('h2',{text:'EvidenceWeave · 原生图谱增强'});
+    containerEl.createEl('p',{text:'只增强原生关系图谱；没有独立图谱页面。节点点击锁定，点击空白取消。Command/Ctrl 点击沿用原生打开笔记。'});
+    new Setting(containerEl).setName('研究文件夹').setDesc('只展示此目录中经过记录的论文关系；空值表示整个 Vault。')
+      .addText(t=>t.setValue(this.plugin.settings.projectFolder).onChange(async v=>{
+        this.plugin.settings.projectFolder=cleanFolder(v);await this.plugin.saveData(this.plugin.settings);await this.plugin.refreshModel();}));
+    new Setting(containerEl).setName('关系总览笔记路径').setDesc('读取 M00 中带 R-Pxx 证据锚点的关系说明。')
+      .addText(t=>t.setValue(this.plugin.settings.overviewPath).onChange(async v=>{
+        this.plugin.settings.overviewPath=str(v);await this.plugin.saveData(this.plugin.settings);await this.plugin.refreshModel();}));
+    new Setting(containerEl).setName('PDF 浮窗宽度').addSlider(sl=>sl.setLimits(245,520,5)
+      .setValue(this.plugin.settings.pdfWidth).setDynamicTooltip().onChange(async v=>{
+        this.plugin.settings.pdfWidth=v;await this.plugin.saveData(this.plugin.settings);}));
   }
 }
 
-class EvidenceWeavePlugin extends Plugin {
+class EvidenceWeavePlugin extends Plugin{
   async onload(){
-    this.settings=Object.assign({},DEFAULT_SETTINGS,await this.loadData());
-    this.registerView(VIEW_TYPE,leaf=>new EvidenceWeaveView(leaf,this));
-    this.addRibbonIcon('network','Open EvidenceWeave',()=>this.activateView());
-    this.addCommand({id:'open-evidence-graph',name:'Open EvidenceWeave paper understanding graph',callback:()=>this.activateView()});
-    this.addSettingTab(new EvidenceWeaveSettingsTab(this.app,this));
+    const data=await this.loadData()||{};
+    this.settings={...DEFAULT_SETTINGS,...data};
+    this.model={nodes:[],edges:[]};this.bindings=new Map();
+    this.pendingRefresh=0;
+    await this.refreshModel();
+    this.addSettingTab(new EvidenceWeaveSettings(this.app,this));
+    this.addCommand({id:'open-native-graph',name:'Open original graph with EvidenceWeave',callback:()=>{
+      const leaf=this.app.workspace.getLeavesOfType('graph')[0];
+      if(leaf)this.app.workspace.revealLeaf(leaf);
+      else this.app.commands.executeCommandById('graph:open');
+    }});
+    this.addCommand({id:'unlock-native-graph',name:'Unlock current native graph focus',callback:()=>{
+      for(const binding of this.bindings.values())binding.unlock();
+    }});
+    const refresh=()=>{clearTimeout(this.pendingRefresh);this.pendingRefresh=setTimeout(()=>void this.refreshModel(),360);};
+    this.registerEvent(this.app.metadataCache.on('changed',refresh));
+    this.registerEvent(this.app.workspace.on('layout-change',()=>this.attachGraphs()));
+    this.registerEvent(this.app.workspace.on('active-leaf-change',()=>this.attachGraphs()));
+    this.registerInterval(window.setInterval(()=>this.attachGraphs(),1250));
+    this.app.workspace.onLayoutReady(()=>this.attachGraphs());
   }
-  onunload(){this.app.workspace.detachLeavesOfType(VIEW_TYPE);}
-  async saveSettings(){await this.saveData(this.settings);}
-  async activateView(){
-    const {workspace}=this.app;
-    let leaf=workspace.getLeavesOfType(VIEW_TYPE)[0];
-    if(!leaf){leaf=workspace.getLeaf('tab');await leaf.setViewState({type:VIEW_TYPE,active:true});}
-    workspace.revealLeaf(leaf);
+  async onunload(){
+    clearTimeout(this.pendingRefresh);
+    for(const binding of this.bindings.values())binding.detach();
+    this.bindings.clear();
+  }
+  isScopedPath(path){
+    const folder=cleanFolder(this.settings.projectFolder);
+    return !folder||path.startsWith(folder+'/');
+  }
+  async refreshModel(){
+    try{
+      this.model=await buildGraphModel(this.app,this.settings);
+      for(const binding of this.bindings?.values()||[])binding.onModelUpdated();
+    }catch(e){console.error('[EvidenceWeave] Failed to read local relations',e);
+      new Notice('EvidenceWeave: 读取本地文献关系失败');}
+  }
+  attachGraphs(){
+    if(!this.bindings)return;
+    const leaves=[...this.app.workspace.getLeavesOfType('graph'),
+      ...this.app.workspace.getLeavesOfType('localgraph')];
+    const seen=new Set(leaves);
+    for(const [leaf,binding] of this.bindings){
+      const renderer=rendererFromLeaf(leaf);
+      if(!seen.has(leaf)||!renderer||binding.adapter.renderer!==renderer){binding.detach();this.bindings.delete(leaf);}
+    }
+    for(const leaf of leaves){
+      if(this.bindings.has(leaf))continue;
+      const renderer=rendererFromLeaf(leaf);
+      if(!renderer)continue;
+      try{const binding=new NativeGraphBinding(this,leaf,renderer);binding.attach();this.bindings.set(leaf,binding);}
+      catch(e){console.warn('[EvidenceWeave] Unsupported graph renderer internals',e);}
+    }
   }
 }
-
-module.exports = EvidenceWeavePlugin;
-module.exports.default = EvidenceWeavePlugin;
-module.exports._test = {
-  safeWebUrl, buildNodeIndex, parseOverviewRelationships, parseTypedRelationship,
-  extractLegacyEvidence, discoverPdfUrl, directedSummary, uniqueRelations,
-  initialLayout, buildGraphModel, edgeReviewStatus, stripStatus,
-};
+module.exports=EvidenceWeavePlugin;
+// Pure helpers for unit tests (Obsidian ignores extra exports).
+module.exports._test={placePdfByNode,readableEdgeAngle,labelPosition,matchNativeRelation,
+  viewpointForNativeRelation,patchOverviewSummary,patchTypedSummary,
+  parseOverviewRelationships,buildNodeIndex,discoverPdfUrl,rendererFromLeaf,NativeGraphAdapter};
