@@ -1,4 +1,4 @@
-/* EvidenceWeave v0.3 — unobtrusive enhancements to the NATIVE Graph View.
+/* EvidenceWeave v0.5 — unobtrusive enhancements to the NATIVE Graph View.
  * No ItemView, no graph drawing, no R2/Cloud/MCP, no automatic Vault mutation.
  */
 'use strict';
@@ -107,4 +107,4 @@ module.exports._test={placePdfByNode,readableEdgeAngle,labelPosition,matchNative
   parseOverviewRelationships,buildNodeIndex,discoverPdfUrl,rendererFromLeaf,NativeGraphAdapter,
   shortLabelFor,patchOverviewLabel,patchTypedLabel,validateShortLabel,
   screenToWorld,worldToScreen,graphScaleFactor,pdfOriginForNode,resizedWorldPanel,movedWorldPanel,
-  avoidLabelCollisions,NativeGraphBinding,eventMayCommit};
+  avoidLabelCollisions,NativeGraphBinding,eventMayCommit,buildGraphModel};
