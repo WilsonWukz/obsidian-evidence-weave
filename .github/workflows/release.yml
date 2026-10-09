@@ -14,6 +14,7 @@ on:
     branches: [main]
     paths:
       - manifest.json
+      - .github/workflows/release.yml
 
 permissions:
   contents: write
@@ -42,10 +43,13 @@ jobs:
       - name: Validate release
         run: |
           set -eu
-          VERSION=$(node -p "require('./manifest.json').version")
+          VERSION="$(node -p 'require("./manifest.json").version')"
+          PACKAGE_VERSION="$(node -p 'require("./package.json").version')"
+          APP_MIN="$(node -p 'require("./manifest.json").minAppVersion')"
+          SUPPORTED_MIN="$(node -p 'require("./versions.json")[process.env.REQUESTED_VERSION]')"
           test "$REQUESTED_VERSION" = "$VERSION"
-          test "$VERSION" = "$(node -p "require('./package.json').version")"
-          test "$VERSION" = "$(node -p "require('./versions.json')[process.env.REQUESTED_VERSION] && process.env.REQUESTED_VERSION)")
+          test "$VERSION" = "$PACKAGE_VERSION"
+          test "$APP_MIN" = "$SUPPORTED_MIN"
           git diff --exit-code -- main.js
           test -z "$(git status --porcelain)"
           for f in main.js manifest.json styles.css LICENSE README.md; do test -s "$f"; done
