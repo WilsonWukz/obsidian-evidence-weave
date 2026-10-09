@@ -1,4 +1,4 @@
-// EvidenceWeave 0.4.1 - native Graph View enhancement, generated from src/.
+// EvidenceWeave 0.5.0 - native Graph View enhancement, generated from src/.
 // Reused EvidenceWeave local Vault relationship parsing and conflict-safe Markdown patching.
 function str(value) { return typeof value === 'string' ? value.trim() : ''; }
 function cleanFolder(value) { return str(value).replace(/^\/+|\/+$/g, ''); }
@@ -345,19 +345,29 @@ async function buildGraphModel(app, settings) {
   const nodes = [];
   const relationFiles = [];
   for (const file of files) {
-    const fm = app.metadataCache.getFileCache(file)?.frontmatter || {};
+    const cache = app.metadataCache.getFileCache(file) || {};
+    const fm = cache.frontmatter || {};
     if (str(fm.relation_id) || str(fm.node_type) === 'relation') {
       relationFiles.push({ file, fm }); continue;
     }
     const kind = str(fm.node_type);
     const paperId = str(fm.paper_id);
     const isCenter = kind === 'center' || file.basename === 'C00-INSES';
-    if (!isCenter && !paperId && !NODE_KINDS.has(kind)) continue;
+    // Generic Obsidian Markdown: PDF embeds/links often appear without YAML.
+    // Read already-cached metadata; never scan every note body or fetch the PDF.
+    const pdfLink = [...(cache.embeds || []), ...(cache.links || [])]
+      .map(item => str(item?.link).split('#')[0].split('?')[0])
+      .find(link => /\.pdf$/i.test(link)) || '';
+    const metadataPdf = str(fm.pdf_path || fm.pdf);
+    const hasPdfMetadata=Boolean(str(fm.pdf_url||fm.pdfUrl)||metadataPdf||pdfLink);
+    const tags = Array.isArray(fm.tags) ? fm.tags : str(fm.tags).split(/[\s,]+/u);
+    const isPaperTag = tags.some(tag => str(tag).replace(/^#/u,'').toLowerCase()==='paper');
+    if (!isCenter && !paperId && !NODE_KINDS.has(kind) && !hasPdfMetadata && !isPaperTag) continue;
     const id = paperId || (isCenter ? 'C00' : file.path);
     nodes.push({ id, path: file.path, basename: file.basename,
       title: str(fm.title) || file.basename,
       kind: isCenter ? 'center' : (kind && NODE_KINDS.has(kind) ? kind : 'paper'),
-      zoteroKey: str(fm.zotero_key), pdfPath: str(fm.pdf_path || fm.pdf),
+      zoteroKey: str(fm.zotero_key), pdfPath: metadataPdf || pdfLink,
       pdfUrl: safeWebUrl(fm.pdf_url),
       sourceUrl: safeWebUrl(fm.source_url || fm.url || fm.URL),
       file,
@@ -1119,14 +1129,14 @@ class NativeGraphBinding {
 }
 
 
-/* EvidenceWeave v0.3 — unobtrusive enhancements to the NATIVE Graph View.
+/* EvidenceWeave v0.5 — unobtrusive enhancements to the NATIVE Graph View.
  * No ItemView, no graph drawing, no R2/Cloud/MCP, no automatic Vault mutation.
  */
 'use strict';
 const {Plugin,PluginSettingTab,Setting,Notice,MarkdownRenderer,Component,parseYaml,requestUrl}=require('obsidian');
 const NODE_KINDS=new Set(['paper','concept','method','dataset','question','center']);
 const DEFAULT_SETTINGS=Object.freeze({
-  projectFolder:'INSES',overviewPath:'INSES/M00-关系总览.md',
+  projectFolder:'',overviewPath:'',
   pdfWidth:495,pdfHeight:810,rememberPdfSize:true,labelMaxChars:32,
 });
 
@@ -1136,19 +1146,19 @@ class EvidenceWeaveSettings extends PluginSettingTab{
     const {containerEl}=this;containerEl.empty();
     containerEl.createEl('h2',{text:'EvidenceWeave · 原生图谱增强'});
     containerEl.createEl('p',{text:'只增强原生关系图谱；没有独立图谱页面。节点点击锁定，点击空白取消。Command/Ctrl 点击沿用原生打开笔记。'});
-    new Setting(containerEl).setName('研究文件夹').setDesc('只展示此目录中经过记录的论文关系；空值表示整个 Vault。')
+    new Setting(containerEl).setName('Research folder / 研究文件夹').setDesc('只展示此目录中经过记录的论文关系；空值表示整个 Vault。')
       .addText(t=>t.setValue(this.plugin.settings.projectFolder).onChange(async v=>{
         this.plugin.settings.projectFolder=cleanFolder(v);await this.plugin.saveData(this.plugin.settings);await this.plugin.refreshModel();}));
-    new Setting(containerEl).setName('关系总览笔记路径').setDesc('读取 M00 中带 R-Pxx 证据锚点的关系说明。')
+    new Setting(containerEl).setName('Relationship overview note / 关系总览笔记').setDesc('读取 M00 中带 R-Pxx 证据锚点的关系说明。')
       .addText(t=>t.setValue(this.plugin.settings.overviewPath).onChange(async v=>{
         this.plugin.settings.overviewPath=str(v);await this.plugin.saveData(this.plugin.settings);await this.plugin.refreshModel();}));
-    new Setting(containerEl).setName('PDF 默认宽度').setDesc('PDF 会随原生图谱一起缩放，也支持拖动四角改变宽高。').addSlider(sl=>sl.setLimits(320,900,5)
+    new Setting(containerEl).setName('Default PDF width / PDF 默认宽度').setDesc('PDF 会随原生图谱一起缩放，也支持拖动四角改变宽高。').addSlider(sl=>sl.setLimits(320,900,5)
       .setValue(this.plugin.settings.pdfWidth).setDynamicTooltip().onChange(async v=>{
         this.plugin.settings.pdfWidth=v;await this.plugin.saveData(this.plugin.settings);}));
-    new Setting(containerEl).setName('PDF 默认高度').addSlider(sl=>sl.setLimits(360,1300,10)
+    new Setting(containerEl).setName('Default PDF height / PDF 默认高度').addSlider(sl=>sl.setLimits(360,1300,10)
       .setValue(this.plugin.settings.pdfHeight).setDynamicTooltip().onChange(async v=>{
         this.plugin.settings.pdfHeight=v;await this.plugin.saveData(this.plugin.settings);}));
-    new Setting(containerEl).setName('记住拖拽后的 PDF 尺寸')
+    new Setting(containerEl).setName('Remember manually resized PDF windows / 记住 PDF 尺寸')
       .setDesc('拖动窗口四角后，新尺寸成为以后打开 PDF 的默认尺寸。')
       .addToggle(t=>t.setValue(this.plugin.settings.rememberPdfSize).onChange(async v=>{
         this.plugin.settings.rememberPdfSize=v;await this.plugin.saveData(this.plugin.settings);
@@ -1228,4 +1238,4 @@ module.exports._test={placePdfByNode,readableEdgeAngle,labelPosition,matchNative
   parseOverviewRelationships,buildNodeIndex,discoverPdfUrl,rendererFromLeaf,NativeGraphAdapter,
   shortLabelFor,patchOverviewLabel,patchTypedLabel,validateShortLabel,
   screenToWorld,worldToScreen,graphScaleFactor,pdfOriginForNode,resizedWorldPanel,movedWorldPanel,
-  avoidLabelCollisions,NativeGraphBinding,eventMayCommit};
+  avoidLabelCollisions,NativeGraphBinding,eventMayCommit,buildGraphModel};
