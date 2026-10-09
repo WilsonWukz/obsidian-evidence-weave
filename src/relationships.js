@@ -19,6 +19,13 @@ function safeWebUrl(url) {
 function stripStatus(text) {
   return str(text).replace(/\s*状态[:：]\s*.+$/u, '').trim();
 }
+function validateShortLabel(value) {
+  const label = str(value);
+  if (!label || label.length > 70 || /[\r\n\u0000-\u001f\u007f]/u.test(label)) {
+    throw new Error('图谱短句必须是 1–70 字的单行文字，建议控制在 8–20 字。');
+  }
+  return label;
+}
 function validateSummary(value) {
   const summary = str(value);
   if (!summary || summary.length > 400 || /[\r\n\u0000-\u001f\u007f]/u.test(summary)) {
@@ -110,6 +117,73 @@ function patchTypedSummary(content, relation, viewpoint, newText, parseYamlFn) {
   const updated = lines.join(fmMatch[2].includes('\r\n') ? '\r\n' : '\n');
   return fmMatch[1] + updated + fmMatch[3] + content.slice(fmMatch[0].length);
 }
+
+const OVERVIEW_LABEL_PREFIX={source:'  - **图谱正向短句**：',target:'  - **图谱反向短句**：'};
+function overviewLabel(line,direction){
+  const prefix=direction==='source'?'图谱正向短句':'图谱反向短句';
+  const escaped=prefix.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  return textWithoutEol(line).match(new RegExp('^\\s{2,}-\\s*\\*\\*'+escaped+'\\*\\*\\s*[：:]\\s*(.+)$','u'))?.[1]?.trim() || '';
+}
+function shortLabelFor(relation,viewpoint){
+  return viewpoint===relation.source?str(relation.labelFromSource):
+    viewpoint===relation.target?str(relation.labelFromTarget):'';
+}
+function patchOverviewLabel(content,relation,viewpoint,newText){
+  const label=validateShortLabel(newText);
+  if(relation?.kind!=='overview'||!relation.storage?.sourceLine)throw new Error('需要明确的 M00 关系来源');
+  const direction=viewpoint===relation.source?'source':viewpoint===relation.target?'target':null;
+  if(!direction)throw new Error('关系视角无效');
+  const rows=splitLinesPreservingNewlines(content);
+  const indices=rows.map((row,i)=>isOverviewLine(row,relation.id)?i:-1).filter(i=>i>=0);
+  if(indices.length!==1)throw new Error('关系编号不存在或重复，不能覆盖');
+  const i=indices[0];
+  if(textWithoutEol(rows[i])!==relation.storage.sourceLine)throw new Error('原始证据行已变化，请刷新后重试');
+  // Only the indented metadata below this exact citation line may be changed;
+  // the long reviewed source text and its review status remain untouched.
+  let end=i+1;
+  while(end<rows.length && /^\s{2,}-\s*/u.test(rows[end])) end++;
+  const matches=[];
+  for(let j=i+1;j<end;j++)if(overviewLabel(rows[j],direction))matches.push(j);
+  if(matches.length>1)throw new Error('此关系存在重复短句字段');
+  const previously=shortLabelFor(relation,viewpoint);
+  const current=matches.length?overviewLabel(rows[matches[0]],direction):'';
+  if(current!==previously)throw new Error('短句已被其他人或同步进程修改，请刷新后重试');
+  const eol=content.includes('\r\n')?'\r\n':'\n';
+  const newRow=OVERVIEW_LABEL_PREFIX[direction]+label;
+  if(matches.length){const old=rows[matches[0]];rows[matches[0]]=newRow+endOfLine(old);}
+  else {if(!endOfLine(rows[i]))rows[i]+=eol;rows.splice(end,0,newRow+eol);end++;}
+  const statusPrefix='  - **图谱短句审核**：';
+  const statusIndices=[];
+  for(let j=i+1;j<end;j++)if(textWithoutEol(rows[j]).startsWith(statusPrefix))statusIndices.push(j);
+  if(statusIndices.length>1)throw new Error('重复的短句审核字段');
+  if(statusIndices.length)rows[statusIndices[0]]=statusPrefix+'用户修改待复核'+endOfLine(rows[statusIndices[0]]);
+  else rows.splice(end,0,statusPrefix+'用户修改待复核'+eol);
+  return rows.join('');
+}
+function patchTypedLabel(content,relation,viewpoint,newText,parseYamlFn){
+  const label=validateShortLabel(newText);
+  if(relation?.kind!=='typed'||!relation.storage?.note||typeof parseYamlFn!=='function')throw new Error('关系来源不可编辑');
+  const match=content.match(/^(---\r?\n)([\s\S]*?)(\r?\n---(?:\r?\n|$))/u);
+  if(!match)throw new Error('关系笔记没有合法 YAML');
+  const fm=parseYamlFn(match[2]);
+  if(!fm||str(fm.relation_id)!==relation.id || str(fm.source||fm.source_id)!==relation.storage.sourceKey ||
+    str(fm.target||fm.target_id)!==relation.storage.targetKey)throw new Error('关系标识发生变化');
+  const key=viewpoint===relation.source?'label_from_source':viewpoint===relation.target?'label_from_target':null;
+  if(!key)throw new Error('编辑视角不匹配');
+  if(str(fm[key])!==shortLabelFor(relation,viewpoint))throw new Error('短句被同步更改，请刷新后再试');
+  const lines=match[2].split(/\r?\n/);
+  const keys=lines.map((line,i)=>new RegExp('^'+key+'\\s*:','u').test(line)?i:-1).filter(i=>i>=0);
+  if(keys.length>1)throw new Error('发现重复 YAML 短句字段');
+  if(keys.length && /:\s*[>|]/u.test(lines[keys[0]]))throw new Error('多行 YAML 请在笔记内修改');
+  if(keys.length)lines[keys[0]]=key+': '+JSON.stringify(label);
+  else lines.push(key+': '+JSON.stringify(label));
+  const statuses=lines.map((line,i)=>/^label_review_status\s*:/u.test(line)?i:-1).filter(i=>i>=0);
+  if(statuses.length>1)throw new Error('重复的审核状态');
+  if(statuses.length)lines[statuses[0]]='label_review_status: unverified';
+  else lines.push('label_review_status: unverified');
+  const eol=match[2].includes('\r\n')?'\r\n':'\n';
+  return match[1]+lines.join(eol)+match[3]+content.slice(match[0].length);
+}
 function shorten(text, max = 54) {
   const value = str(text).replace(/\s+/g, ' ');
   return value.length > max ? `${value.slice(0, max - 1)}…` : value;
@@ -165,11 +239,17 @@ function parseOverviewRelationships(markdown, sourceNode, index, overviewPath) {
     if (!description) continue;
     const reverseLine = lines[i + 1] || '';
     const reverse = reverseSummaryFromLine(reverseLine);
+    const extras=[];
+    for(let j=i+1;j<lines.length && /^\s{2,}-\s*/u.test(lines[j]);j++)extras.push(lines[j]);
+    const labelSource=extras.map(v=>overviewLabel(v,'source')).find(Boolean)||'';
+    const labelTarget=extras.map(v=>overviewLabel(v,'target')).find(Boolean)||'';
+    const labelStatus=extras.some(v=>/图谱短句审核.*待复核/u.test(v))?'unverified':'reviewed';
     result.push({
       id: anchorMatch[1], source: sourceNode.id, target: dest.id,
       type: 'citation_context', kind: 'overview',
       status: /状态[:：]\s*有限关系已审/u.test(match[2]) ? 'limited_reviewed' : 'unverified',
       summaryFromSource: description,
+      labelFromSource:labelSource,labelFromTarget:labelTarget,labelStatus,
       summaryFromTarget: reverse || `该文献在 ${sourceNode.basename} 中的作用：${description}`,
       evidence: { note: dest.path, block: anchorMatch[1], sourceNote: overviewPath },
       storage: {kind:'overview',note:overviewPath,sourceLine:line,
@@ -199,6 +279,9 @@ function parseTypedRelationship(frontmatter, index) {
     status: edgeReviewStatus(frontmatter.review_status),
     summaryFromSource: from,
     summaryFromTarget: to,
+    labelFromSource: str(frontmatter.label_from_source),
+    labelFromTarget: str(frontmatter.label_from_target),
+    labelStatus: edgeReviewStatus(frontmatter.label_review_status),
     evidence: {
       note: str(ev.note), block: str(ev.block).replace(/^\^/, ''),
       section: str(ev.section), quote: str(ev.quote),
