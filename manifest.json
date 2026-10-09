@@ -1,9 +1,9 @@
 {
   "id": "evidence-weave",
   "name": "EvidenceWeave",
-  "version": "0.1.0",
-  "minAppVersion": "1.5.0",
-  "description": "Evidence-aware scholarly graph, relationship explanations, and PDF reading in Obsidian.",
+  "version": "0.5.0",
+  "minAppVersion": "1.14.4",
+  "description": "Add PDF previews and editable relationship labels to the native graph view.",
   "author": "WilsonWukz",
   "isDesktopOnly": true
 }

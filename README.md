@@ -1,78 +1,73 @@
-# EvidenceWeave · 论文证据关系工作台
+# EvidenceWeave
 
-**A local-first Obsidian desktop plugin for reading paper-relationship explanations alongside source PDFs, instead of mistaking plain wikilinks for scholarly evidence.**
+**Add contextual PDF previews and editable relationship labels to Obsidian's native Graph view.**
 
-![Status](https://img.shields.io/badge/version-0.1.0%20MVP-blue) ![No runtime deps](https://img.shields.io/badge/runtime%20dependencies-0-green)
+EvidenceWeave is a lightweight **desktop** plugin. It does **not** replace Obsidian's force-directed graph or create a second graph page.
 
-> Independent of `obsidian-knowledge-mcp` and the Cloudflare/Remotely Save deployment. **This plugin reads the local Vault only.** It does not connect to ChatGPT, Zotero Cloud APIs, GitHub, or any MCP server; it does not write or publish research notes.
+## Features
 
-## What works in v0.1
+- Hover a paper node: see Obsidian's normal highlighted neighbors, short directional labels on documented relationships, and a PDF preview if a source exists.
+- Click to lock focus; click empty canvas to unlock. Cmd/Ctrl-click retains native open-note behavior.
+- Drag the PDF window by its title bar and resize from any corner. PDF panel and labels move and scale with the graph; wheel scrolling inside a PDF turns pages.
+- Click a relation label to edit. Enter saves to the original Markdown note (Esc cancels; Chinese/other IME composition supported). Editing a **short label** never overwrites the original long scholarly evidence and marks that label for review.
+- Ordinary note metadata updates do not unnecessarily reload a PDF being read. Where publisher embeds fail, ↗ opens the original file in a browser; ↻ optionally retries a one-time complete in-memory PDF fetch.
+- Never creates phantom edges or claims that a wikilink proves a scientific relationship.
 
-- Dedicated **EvidenceWeave graph view** in Obsidian, with draggable nodes, pan, zoom, search, and quick-reset.
-- Hover a paper node to highlight its immediate neighbors and show **one sentence per connected edge**, from the hovered paper's viewpoint. Complete summaries are also listed in the scrollable right pane; graph labels are shortened where space is limited.
-- Click a paper to pin the right-hand **PDF reading pane**. Hover a different paper for a temporary preview. Supports Vault-local PDFs through Obsidian's native Markdown PDF embed and external `.pdf` URLs via iframe (publisher embedding restrictions may apply).
-- Click any annotated edge to inspect an **evidence card**: provenance status, statement, source note, citation anchor, original short quote and recorded PDF page (when available). Open the exact note block to verify yourself.
-- Read existing `INSES/M00-关系总览.md` entries and `R-Pxx-01` anchors: compatible with the current 30-paper SOP project; **does not fabricate paper-to-paper research relationships**.
-- Optional visualization of ordinary `[[wikilinks]]` as dashed, **unverified** links, off by default.
-- Read typed relation notes using YAML frontmatter without changing existing note formats. See [`docs/RELATION_SCHEMA.md`](docs/RELATION_SCHEMA.md).
-- Scoped to the `INSES` folder by default; configurable for other projects.
+## Install and try
 
-## Install on Mac (manual local plugin install)
+Once listed in Obsidian, enable EvidenceWeave from **Community plugins**, then open Obsidian's built-in **Graph view**. For manual installation, copy `main.js`, `manifest.json`, `styles.css` from the matching [GitHub Release](https://github.com/WilsonWukz/obsidian-evidence-weave/releases) into `.obsidian/plugins/evidence-weave/`.
 
-1. Download the prepared release package `evidence-weave-plugin-v0.1.0.zip` or build this repository.
-2. In your **test** Vault, open the hidden `.obsidian/plugins` folder, create `evidence-weave/`.
-3. Copy `manifest.json`, `main.js`, and `styles.css` into that folder (**not** the entire source ZIP). The final paths must look like:
+PDF sources: YAML `pdf_path` / `pdf` / `pdf_url`, a local Markdown PDF embed such as `![[paper.pdf]]`, or a direct PDF link in a recognized paper note. If no PDF exists, no popup appears.
 
-   ```text
-   Research-MCP-Test/.obsidian/plugins/evidence-weave/manifest.json
-   Research-MCP-Test/.obsidian/plugins/evidence-weave/main.js
-   Research-MCP-Test/.obsidian/plugins/evidence-weave/styles.css
-   ```
+The optional **research folder** and **overview note** settings are blank by default (entire Vault; no special overview). Users with existing custom settings keep them when updating. A legacy INSES-overview importer is optional, not required.
 
-4. In Obsidian → Settings → Community plugins, enable community plugins if necessary and enable **EvidenceWeave**. The ribbon's network icon opens the graph. You can also run **Open EvidenceWeave paper understanding graph** from the command palette.
-5. In plugin settings confirm Project Folder `INSES`, Overview Path `INSES/M00-关系总览.md`.
-6. Hover `P21-Dense-X-Retrieval` to read its relationship with INSES. Click the relationship, then **跳到证据笔记**. If a PDF URL exists inside the note, the right pane displays it (or provides a browser fallback).
+## Short relation records
 
-### Important PDF limitation
+Create a Markdown relation note with YAML:
 
-`pdf_path` is optional and must point to an actual PDF file **inside this Vault**, e.g. `Attachments/paper.pdf`. Existing Zotero attachments stored only in Zotero are not magically imported. For a source PDF URL embedded in Markdown, the plugin attempts an inline preview; cross-origin restrictions or publishers' `X-Frame-Options`/CSP can block it, so the **Open PDF in browser** link is always provided. Inline preview contacts the publisher; disable online PDF previews in settings for privacy or when offline.
-
-## Data contract
-
-For existing INSES notes, `paper_id: P21` identifies the graph node and `M00` contains a row like:
-
-```md
-- [[P21-Dense-X-Retrieval#^R-P21-01|P21 · Dense X Retrieval]]：INSES 引用这项工作作为检索粒度背景。 状态：有限关系已审。
+```yaml
+---
+node_type: relation
+relation_id: R-paper-a-b
+source: Papers/Paper A.md
+target: Papers/Paper B.md
+relation_type: compares
+label_from_source: "Compares its retrieval strategy with B"
+label_from_target: "Serves as a retrieval comparison for A"
+label_review_status: unverified
+summary_from_source: "Detailed interpretation with the citation and caveats."
+summary_from_target: "Detailed explanation from B's viewpoint."
+review_status: unverified
+---
 ```
 
-The plugin reads the row and existing evidence anchor; it does **not** claim that `P21` experimentally outperformed `P18` or any other paper. New typed relationships can be authored under `INSES/Relations/` (or another Markdown path) using the separate schema. Missing/ambiguous endpoints are skipped, never guessed.
+A real wikilink must connect both paper notes for Obsidian's native Graph view to draw the edge. EvidenceWeave adds labels to those **existing edges only**. Detailed evidence and short labels are separate. See [relationship schema](docs/RELATION_SCHEMA.md).
 
-Review statuses reflect what's written in the source note, not what the plugin has independently audited. `limited_reviewed` means a limited citation relation was checked, not a full-paper or replication audit. The original English quote is merely displayed for the reader to verify.
+## Privacy, network use and safety
+
+- **Local-first.** Reads Markdown and metadata from the current Vault. No account, external sync service, MCP endpoint, analytics, telemetry, ads, self-updating code or data uploads to the maintainer.
+- **Remote PDF preview connects directly to the host in the note's PDF link** (journal, university, proceedings or preprint server). The server may observe your IP and request headers. If you press ↻, Obsidian's `requestUrl` fetches the complete linked PDF once into memory; **the 30 MB limit is checked after the response arrives** (not a pre-download bandwidth cap), and the temporary in-memory object is released on closing/switching files. Some publishers disable embedded previews.
+- **Writing is explicit.** Only pressing Enter after editing a relation label triggers a guarded `vault.process` update inside the current Vault. Any subsequent sync is performed by your existing, separate Obsidian sync setup, not by this plugin.
+- Does not access files outside the Vault. External browser opening happens only when you click ↗.
+
+## Compatibility and known limitations
+
+Desktop Obsidian **1.14.4+**. The native Graph renderer uses undocumented internal APIs: future Obsidian versions can break that integration. Unsupported internal structures leave the native view alone. The built-in Chromium PDF renderer and external publishers may prevent later pages loading; click ↗ to read the original. Relation labels do not replace evidence verification.
 
 ## Development
 
-No runtime dependencies, external build service or network access are required. Node.js 18+:
+Node.js 18+; no runtime npm dependencies. `main.js` is generated from `src/` using `npm run build`; `npm run check` builds and runs tests. Source-build parity and release-asset validation run in CI. The [manual release workflow](.github/workflows/release.yml) creates the exact-version tag and Release assets.
 
-```bash
-npm test
-npm run build
-```
+## License and attribution
 
-`src/main.js` is the source. `npm run build` copies it to the standalone Obsidian-compatible CommonJS `main.js`. `styles.css` and `manifest.json` are loaded by Obsidian. Tests exercise extraction, directional statements, fallback behavior and the data model with synthetic notes.
+[MIT](LICENSE). Independent implementation inspired by the public approaches of [Graph Edge Notes](https://github.com/li-zane/obsidian-graph-edge-notes) and [Graph Highlight Lock](https://github.com/ruruoni1/obsidian-graph-highlight-lock). Not affiliated with or endorsed by Obsidian.
 
-For official release packaging, upload `main.js`, `manifest.json`, `styles.css` to a GitHub release with tag `0.1.0`, as recommended by the [Obsidian sample plugin](https://github.com/obsidianmd/obsidian-sample-plugin). **v0.1 is a test release, not yet accepted against a running Mac Obsidian instance.** Live UI/PDF embedding must be confirmed in `Research-MCP-Test` before production use.
+---
 
-## Roadmap
+## 中文简介
 
-- v0.1 local MVP: native evidence graph + PDF reader + edge explanations and anchors.
-- v0.2: reliable PDF page highlighting, structured relation editor (manual approval), stronger layout/collision handling, optional understanding checkpoints.
-- v0.3: optional Zotero attachment resolution / citation metadata validation, strictly separate from the existing MCP.
+EvidenceWeave **只增强 Obsidian 原生关系图谱**，不新建图谱页面。悬停论文节点展示关联关系及 PDF（无 PDF 不显示），点击节点锁定、点击空白处解除。PDF 可以拖动标题栏移动、拖动四角调整大小，并随图谱一起平移和缩放；在 PDF 内滚动可翻页。关系短句点击后可编辑并按 Enter 保存到 Markdown，**不会覆盖详细证据**。
 
-## Security and provenance
+默认扫描整个 Vault；可设置研究文件夹。支持笔记中 `pdf_path`、`pdf_url`、`![[paper.pdf]]` 等 PDF 来源。只有原生双链与明确的关系记录才能产生语义标签，不会凭空猜测学术关系。
 
-- Read-only. No file edits, Cloudflare, OAuth tokens, or MCP calls.
-- A remote PDF link from a note is an outbound network request. Disable remote preview if undesired.
-- Private research notes and copyrighted PDFs are **not** included in this repository. Examples and tests contain only fabricated data.
-- Markdown and relation labels are rendered via text nodes; no raw HTML injection or execution of note content.
-
-MIT © 2026 Kezhao Wu.
+**网络和隐私：**在线 PDF 预览会直接连接 PDF 来源网站，网站可能看到访问 IP。↻ 会按需将 PDF 暂存在内存中，不上传插件开发者服务器。只有你修改短句并按 Enter 后才会写入当前 Vault。插件不包含遥测和 Cloud/MCP 同步。

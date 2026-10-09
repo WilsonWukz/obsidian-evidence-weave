@@ -1,0 +1,10 @@
+import { readFile, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+const base=dirname(fileURLToPath(import.meta.url));
+const files=['src/relationships.js','src/geometry.js','src/graph-adapter.js','src/native-overlay.js','src/main.js'];
+const pieces=await Promise.all(files.map(f=>readFile(join(base,f),'utf8')));
+const manifest=JSON.parse(await readFile(join(base,'manifest.json'),'utf8'));
+const contents=`// EvidenceWeave ${manifest.version} - native Graph View enhancement, generated from src/.\n`+pieces.join('\n\n');
+await writeFile(join(base,'main.js'),contents,'utf8');
+console.log(`Built main.js (${Buffer.byteLength(contents)} bytes)`);

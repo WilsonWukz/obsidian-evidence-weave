@@ -1,14 +1,27 @@
-name: Check build
+name: Check EvidenceWeave
 on:
   push:
   pull_request:
 jobs:
-  check:
+  build-and-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: npm run build
-      - run: test -s main.js && test -s manifest.json && test -s styles.css
+      - run: npm run check
+      - name: Verify committed build matches source
+        run: git diff --exit-code -- main.js
+      - name: Validate plugin metadata
+        run: |
+          node - <<'NODE'
+          const fs=require('node:fs');
+          const m=JSON.parse(fs.readFileSync('manifest.json','utf8'));
+          const v=JSON.parse(fs.readFileSync('versions.json','utf8'));
+          const p=JSON.parse(fs.readFileSync('package.json','utf8'));
+          if(!/^[a-z][a-z0-9-]*$/.test(m.id)||m.id.includes('obsidian'))throw Error('Bad id');
+          if(m.version!==p.version||v[m.version]!==m.minAppVersion)throw Error('Version mismatch');
+          if(!m.description.endsWith('.')||m.description.length>250)throw Error('Bad description');
+          for(const f of ['main.js','manifest.json','styles.css','LICENSE','README.md'])if(!fs.statSync(f).isFile())throw Error('Missing '+f);
+          NODE

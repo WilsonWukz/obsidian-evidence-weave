@@ -2,8 +2,9 @@ node_modules/
 .DS_Store
 *.log
 .env
-*.env
 *.pem
 .obsidian/
 Research-MCP-Test/
 INSES/
+
+/browser-smoke.png
