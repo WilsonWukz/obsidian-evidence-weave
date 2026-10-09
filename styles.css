@@ -1,64 +1,89 @@
-/* EvidenceWeave: only adds positioned overlays to the original Graph View.
-   It never restyles Obsidian's native nodes, edges, labels, or controls. */
+/* No replacement Graph View: the native canvas still draws and animates all nodes/edges. */
 .ew-native-overlay {
-  position: absolute; inset: 0; width: 100%; height: 100%;
-  overflow: hidden; pointer-events: none; z-index: 12;
-  font-family: var(--font-interface);
+  position:absolute;inset:0;width:100%;height:100%;overflow:hidden;
+  pointer-events:none;z-index:12;font-family:var(--font-interface);
 }
 .ew-native-label-layer {position:absolute;inset:0;pointer-events:none}
 .ew-native-edge-label {
-  position:absolute; left:0; top:0; padding:3px 7px;
-  transform:translate(-50%,-72%) rotate(var(--ew-rotation,0rad));
-  transform-origin:50% 50%; pointer-events:auto;
-  max-width: 210px; min-width: 36px; white-space:nowrap; overflow:hidden;
-  text-overflow:ellipsis; line-height:1.4; font-size:11px;
-  font-weight:500; border-radius:5px;
-  color:var(--text-normal); background:var(--background-primary);
-  border:1px solid var(--background-modifier-border);
-  box-shadow: 0 1px 5px rgba(0,0,0,.16);
-  cursor:text; z-index:1;
+  position:absolute;left:0;top:0;max-width:170px;padding:1px 4px;
+  transform:translate(-50%,-64%) rotate(var(--ew-rotation,0rad)) scale(var(--ew-label-scale,1));
+  transform-origin:center;pointer-events:auto;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;
+  background:color-mix(in srgb,var(--background-primary) 72%,transparent);
+  border:1px solid transparent;border-radius:3px;
+  box-shadow:none;color:var(--text-normal);font-size:11px;font-weight:500;
+  line-height:1.35;cursor:text;
 }
 .ew-native-edge-label:hover,.ew-native-edge-label:focus-visible {
-  border-color:var(--interactive-accent);color:var(--text-normal);
-  box-shadow:0 2px 10px rgba(0,0,0,.22);
+  border-color:var(--interactive-accent);
+  background:var(--background-primary);
+  box-shadow:0 1px 5px rgba(0,0,0,.12);
+}
+.ew-native-edge-label.ew-label-empty {
+  color:var(--text-muted);font-size:10px;opacity:.63;
+  border-style:dashed;
 }
 .ew-native-edge-editor {
-  position:absolute;z-index:10;transform:translate(-50%,-70%);
-  min-width:240px;max-width:min(460px,90%);width:340px;
-  font-size:12px; border:1px solid var(--interactive-accent);
-  border-radius:5px;background:var(--background-primary);
-  color:var(--text-normal);padding:6px 8px;
-  box-shadow:0 4px 16px rgba(0,0,0,.2);pointer-events:auto;
+  position:absolute;z-index:20;transform:translate(-50%,-120%);
+  min-width:220px;width:280px;max-width:85%;
+  font-size:12px;border:1px solid var(--interactive-accent);
+  border-radius:4px;background:var(--background-primary);color:var(--text-normal);
+  padding:7px 9px;box-shadow:0 4px 16px rgba(0,0,0,.18);
+  pointer-events:auto;
 }
 .ew-native-pdf {
-  position:absolute; left:0;top:0;
-  display:flex; flex-direction:column; overflow:hidden;
-  min-width:230px; min-height:145px; pointer-events:auto;
+  position:absolute;left:0;top:0;display:flex;flex-direction:column;
+  overflow:hidden;min-width:320px;min-height:360px;
+  transform-origin:top left;pointer-events:auto;
   background:var(--background-primary);
   border:1px solid var(--background-modifier-border);
-  border-radius:9px;box-shadow:0 6px 24px rgba(0,0,0,.2);
-  z-index:8;
+  border-radius:8px;box-shadow:0 5px 22px rgba(0,0,0,.17);z-index:8;
+  /* We deliberately avoid CSS contain/zoom on a Chromium PDF iframe. */
 }
-.ew-native-pdf[hidden] {display:none !important}
+.ew-native-pdf[hidden] {display:none!important}
 .ew-native-pdf-header {
-  flex:0 0 auto;display:flex;align-items:center;
-  gap:8px;padding:6px 9px;min-height:34px;
+  flex:0 0 auto;display:flex;align-items:center;gap:6px;
+  padding:4px 8px;min-height:33px;
+  cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;
   background:var(--background-secondary);
   border-bottom:1px solid var(--background-modifier-border);
 }
-.ew-native-pdf-name{flex:1;min-width:0;font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ew-native-pdf-actions{display:flex;gap:4px;align-items:center;flex:0 0 auto}
+.ew-native-pdf-header:active {cursor:grabbing}
+.ew-native-pdf-header .ew-native-pdf-actions,
+.ew-native-pdf-header .ew-native-pdf-action {cursor:pointer}
+.ew-native-pdf-name {flex:1;min-width:0;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ew-native-pdf-actions {display:flex;gap:3px;align-items:center;flex:0 0 auto}
 .ew-native-pdf-action {
-  padding:2px 6px;line-height:1.5;font-size:12px;
-  min-width:25px;min-height:23px;background:transparent;
-  border:1px solid transparent;color:var(--text-muted);border-radius:4px;cursor:pointer;
+  padding:2px 7px;line-height:1.4;font-size:12px;min-width:26px;min-height:24px;
+  background:transparent;border:1px solid transparent;color:var(--text-muted);
+  border-radius:4px;cursor:pointer;
 }
-.ew-native-pdf-action:hover {border-color:var(--background-modifier-border);color:var(--text-normal)}
-.ew-native-pdf-body {flex:1;min-height:0;min-width:0;overflow:auto; background:white;}
-.ew-native-pdf-frame {display:block;border:0;width:100%;height:100%;min-height:100%;}
-.ew-native-pdf-body .internal-embed,.ew-native-pdf-body .pdf-embed,.ew-native-pdf-body .markdown-embed {
-  display:block;min-width:0;min-height:100%;height:100%;
+.ew-native-pdf-action:hover{border-color:var(--background-modifier-border);color:var(--text-normal)}
+.ew-native-pdf-status{font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:2px 7px;color:var(--text-muted)}
+.ew-native-pdf-body {
+  flex:1;min-width:0;min-height:0;display:flex;
+  /* Single scroll owner: the inner Obsidian PDF viewer or Chromium PDF frame. */
+  overflow:hidden;background:white;
 }
-.ew-native-pdf-body .markdown-preview-view {height:100%;}
-/* The actual Chrome PDF viewer or Obsidian PDF embed owns scrolling/zoom; the
-   two small buttons also scale its displayed viewport. */
+.ew-native-pdf-frame {
+  display:block;flex:1;min-width:0;min-height:0;border:0;width:100%;height:100%;
+}
+.ew-native-pdf-body .internal-embed,
+.ew-native-pdf-body .pdf-embed,
+.ew-native-pdf-body .markdown-embed {
+  flex:1;min-width:0;min-height:0;height:100%;width:100%;
+}
+.ew-native-pdf-body .markdown-preview-view {width:100%;height:100%;}
+.ew-native-pdf-error{font-size:12px;color:#b55;padding:12px}
+.ew-native-resize {
+  position:absolute;width:15px;height:15px;z-index:14;
+  pointer-events:auto;touch-action:none;
+  opacity:.02;background:var(--interactive-accent);
+  border-radius:2px;
+}
+.ew-native-pdf:hover .ew-native-resize {opacity:.36}
+.ew-native-resize:hover,.ew-native-resize:active{opacity:.8!important}
+.ew-resize-nw{left:0;top:0;cursor:nwse-resize}
+.ew-resize-ne{right:0;top:0;cursor:nesw-resize}
+.ew-resize-sw{left:0;bottom:0;cursor:nesw-resize}
+.ew-resize-se{right:0;bottom:0;cursor:nwse-resize}

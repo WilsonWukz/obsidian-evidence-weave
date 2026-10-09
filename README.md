@@ -1,57 +1,82 @@
-# EvidenceWeave · 轻量原生关系图谱增强
+# EvidenceWeave · 原生关系图谱轻量增强
 
-**v0.3.0 experimental — Obsidian native Graph View overlay.**
+**v0.4.1 / candidate, native Graph View only.**
 
-EvidenceWeave 不创建新页面、不重新布局节点、不改动画布，也不需要 Cloud/MCP/Zotero API。安装并启用后，直接使用 Obsidian 自带的 **关系图谱**（全局图谱或局部图谱）。
+EvidenceWeave 不创建新图谱页面，不替换 Obsidian 的节点、连线、物理布局、拖拽、平移、缩放和原生配色。它只给 Obsidian 自带的 Graph View 添加一条学术关系短句和同一画布上的 PDF 阅读窗。仍然独立于 Cloudflare / Obsidian MCP / Zotero Cloud。
 
-## 交互
+## 操作
 
-| 操作 | 效果 |
+| 操作 | 行为 |
 | --- | --- |
-| 鼠标悬停论文节点 | Obsidian **自己**高亮邻接节点和线；EvidenceWeave 只为有学术语义的可见连线叠加一句可编辑说明 |
-| 有 PDF 的论文节点 | 原有图谱内部浮出狭长 PDF 窗口，右侧优先，空间不够选左侧；含 +/− 缩放及 PDF 自有滚动条 |
-| 没有本地 PDF / 直接 PDF 链接 | **不弹出**空白窗格 |
-| 单击节点 | 固定该节点及其关系线、说明和 PDF，移走鼠标仍不变 |
-| 单击另一个节点 | 锁定到新节点 |
-| **单击图谱空白处** | 取消锁定，回到普通原生悬停模式 |
-| 点击关系线上文字 | 出现单行编辑框；`Enter` 保存到其原始 Markdown 关系说明（同步后才传播至 R2），`Esc` 取消当前文字编辑 |
-| `Cmd/Ctrl` + 点击节点 | 保留原生 Obsidian 点击打开笔记行为 |
+| 悬停论文节点 | 原生高亮连接；有**真实两端关系**的连线显示方向短句；有 PDF 才在节点附近显示阅读器 |
+| 单击节点 | 锁定**阅读焦点**，原生节点仍可随物理布局运动；移开鼠标不换论文 |
+| 单击空白画布 | 解除锁定，恢复原生悬停 |
+| 放大/缩小及平移图谱 | 原生图谱照常交互；浮动 PDF 的位置和**整块尺寸**随图谱相同的相机参数变换 |
+| **按住 PDF 标题栏并拖动** | 在同一原生图谱画布上自由移动 PDF；松开后保留位置，图谱缩放/平移时仍一起变换；不会拖动节点或改变 PDF 大小 |
+| 拖动 PDF 任意四角 | 只调整 PDF 的基础宽/高，默认记住尺寸；不会拖动原生图谱 |
+| 在 PDF 内滚动 | 阅读 PDF 正文，避免双层滚动区域；不会误触发图谱缩放 |
+| 点击关系短句 | 内联编辑 `label_from_source` / `label_from_target`，或 M00 的独立短句字段；回车保存，Esc 取消 |
+| 输入中文时按回车选词 | 不会触发保存，支持 IME composition |
+| Cmd/Ctrl+点击节点 | 沿用 Obsidian 原生打开笔记行为 |
+| 悬停 PDF 中心后阅读 | 保持原 PDF DOM 和阅读滚动位置；其他笔记刷新不会重载同一个 PDF |
+| PDF↗ | 在外部浏览器打开完整来源；远程 PDF 可以尝试 `↻` 一次性载入完整文档到内存 |
 
-> **先拿测试 Vault 试验。** 输入会修改你本地现有关系概览 Markdown，建议先备份 `INSES/M00-关系总览.md`。任何编辑都会将该关系标记为“用户修改待复核”，不会冒充已核验的学术结论。
+**默认 PDF 宽 495px、高 810px**（相对于 v0.3 的 330×450 即 1.5×、1.8×）。原 v0.3 默认值会迁移；已经自定义过的尺寸予以保留。缩放后的尺寸不会被强行缩回视口，以保持同一世界画布的逻辑。
 
-## 设计约束
+## 边上的文字与学术证据分开存储
 
-- **零新的 Graph View**：不调用 `registerView`，也不绘制节点、边或排布。全图平移缩放完全由原生图谱负责。
-- **只注释真实存在的图边**。R2 关系记录不能凭空创造 Obsidian 的 `[[双链]]`；当前 `C00` 只直接链接 P01–P05，而 `M00-关系总览` 直接链接 P01–P30。插件会在 M00→Pxx 的实际边上复用 M00 描述的 C00→Pxx 关系，并明确保留出处的语义，不伪造 C00→Pxx 原生连线。
-- 优先使用已有 `INSES/M00-关系总览.md` 里 `[[Pxx#^R-Pxx-01|...]]：一句说明。 状态：...` 关系，以及 `node_type: relation` 的独立关系笔记。没有可靠语义说明的普通 `[[wikilink]]` **不显示**关系文字。
-- PDF 只来自论文笔记 frontmatter 的有效 `pdf_path` / `pdf_url` 或笔记内明确的 `.pdf` HTTPS 链接。只有 `.md` 本身没有 PDF 时不展示浮窗；链接存在但服务器禁止内嵌时，可使用浮窗中的 **↗** 在浏览器查看。
-- **写入范围**：只允许当前研究文件夹（默认 `INSES/`）内有既存 relation 记录的源笔记；新文本限制单行 1–400 字，通过 Obsidian `vault.process` 原子保存，检测源文本是否变化，失败不会覆盖，并标记待复核。无自动创建、无网络上传、无批量覆盖、无删除。
-- **未公开内部 API 风险**：原生 Graph View 没有官方扩展接口；插件借助 `renderer.nodeLookup`, `renderer.highlightNode`, `renderer.getHighlightNode`, `renderer.onNodeClick`, `renderer.links`, `renderer.panX/panY/scale`。兼容适配集中在 `src/graph-adapter.js`，卸载后还原原有方法。Obsidian 未来升级可能破坏兼容，尤其尚未在用户的 **Obsidian 1.14.4** 环境实际验收。
-- 默认无跨会话锁定持久化。不自动影响 Obsidian Sync、Remotely Save 或 MCP，只更改本地笔记，原同步行为不变。
+长篇学术证据继续留在 `INSES/M00-关系总览.md` 的原行，未核验的原文不能替换为简写。该行下方可以有两个单行字段：
 
-## 安装
+```markdown
+- [[P21-Dense-X-Retrieval#^R-P21-01|P21 · Dense X Retrieval]]：INSES §2.2...详细证据与限定。 状态：有限关系已审；整合待验收。
+  - **图谱正向短句**：提供细粒度检索背景
+  - **图谱反向短句**：被 INSES 作为粒度研究背景引用
+  - **图谱短句审核**：用户修改待复核
+```
 
-1. 解压本次提供的 `evidence-weave-plugin-v0.3.0-native.zip`；将 `evidence-weave/` 放入 `Research-MCP-Test/.obsidian/plugins/`，覆盖测试 Vault 里的旧版本。
-2. 完全退出并重新打开 Obsidian，在 **设置 → 第三方插件** 里启用 EvidenceWeave。
-3. **打开原生的「关系图谱」**，而不是寻找 EvidenceWeave 新页面。旧版独立工作台入口已移除。
-4. 悬停/单击 `INSES/P21-Dense-X-Retrieval`，检查 M00 与 P21 的原生连接是否有文字。P21 本身有 PDF URL 时才出现 PDF 浮窗。
-5. 用测试性文字修改一条非关键关系，按 Enter，然后在 `INSES/M00-关系总览.md` 核对被修改的那一行；再通过原有 Remotely Save 同步。
+从 C00 悬停时使用“正向短句”；从 P21 悬停时使用“反向短句”。两者可以不同。点击缺失短句的关系连线时，会出现轻量“＋短句”，由用户填写；**插件不会自动从长篇证据硬截一段或伪造摘要**。短句变更只写这些专用字段，旧“详细证据”和其学术审查状态不变，新的短句独立标为待复核。
 
-## 构建与测试
+如果使用独立关系笔记，保留 `summary_from_source` / `summary_from_target` 作为详细说明，新增：
 
-Node >=18：
+```yaml
+label_from_source: "在该问题上提供相关背景"
+label_from_target: "被中心论文作为背景引用"
+label_review_status: unverified
+```
+
+**严格按真实原生边标注。** `M00 → Pxx` 表示“总览笔记链接了 Pxx”，**不自动等于** `C00 → Pxx` 的学术关系，因此 v0.4 去掉了 v0.3 的 M00 关系语义借用。同一个学术关系也不会自动复制两份到不同边上。为了显示更多 C00→Pxx 的学术关系，需要在 C00 笔记中建立真实 `[[wikilink]]` 或使用已经存在的真实 C00 边；插件不自动改写 Vault 或创造假边。
+
+## PDF 完整阅读与限制
+
+1. 优先使用本地 Vault 已存在的 PDF (`pdf_path` / Obsidian 附件)。阅读器只渲染一次；在修改旁边短句或其他元数据时不重复载入。
+2. 只有 HTTP(S) PDF 链接时，使用 Chromium 原生 PDF frame，`loading=eager`，外层不再通过 `style.zoom` 放缩文档，也不再有第二层纵向滚动容器。
+3. 若出版社服务器不支持 iframe、HTTP Range 下载或内嵌 PDF 出现后半段空白，用户可点击 `↻`，经 **Obsidian requestUrl** 单次请求全文（**30MB 上限**），校验 PDF 文件头，使用 `blob:` URL 重新阅读。**只保存在当前内存，不写入 Vault、R2 或仓库**；离开 PDF 即释放 blob。
+4. 无法保证任何第三方 PDF 服务器都支持内嵌，也不能仅凭 PDF iframe `load` 判断所有页面是否可读；因此始终提供 `↗` 供外部阅读。需要通过 Mac 端具体文件确认最后一页可达。
+5. 鼠标在 PDF 页面内滚轮用于翻页；在外侧原生图谱上缩放会**同步缩放 PDF 与整个画布**。这是有意区分的两种手势。
+
+## 安装 / 升级
+
+1. 先备份测试 Vault 的 `.obsidian/plugins/evidence-weave` 及 `INSES/M00-关系总览.md`。
+2. 将 `evidence-weave-plugin-v0.4.1-native.zip` 内的 `evidence-weave/` 解压到 `Research-MCP-Test/.obsidian/plugins/` 覆盖旧版。
+3. 重新启动 Obsidian，或先禁用再启用 EvidenceWeave。
+4. 直接打开 Obsidian **核心插件「关系图谱」**，而非以前的自制工作台。
+5. 测试 P01 / P21 等论文节点；先看原生节点是否仍能拖动及释放后受力运动，再检查标签、锁定、**PDF 标题栏平移**、图谱缩放、四角调整大小、长 PDF 滚动和短句写回。
+
+**重要：** 原生 Graph View 的内部 Renderer API 未公开，Obsidian 1.14.4 的真正物理动画、交互和不同出版社 PDF 兼容性，必须在使用者 Mac 上实测。单元测试与 Chromium 模拟只验证我们没有主动改写原生物理控制与相关 DOM 行为；不代表原生实际版本已验收。
+
+## 本地构建与安全界限
 
 ```sh
 npm run build
 npm test
+python tests/browser-smoke.py  # 需要 Python Playwright + Chromium，用合成模拟 Renderer
 ```
 
-无第三方运行时依赖。运行测试使用合成 Renderer 模拟，不等于真实 Obsidian 客户端验收。
+- 插件只读取当前 Vault，并仅在用户回车确认后通过 `vault.process` 改写**原有关系短句字段**；单行 1–70 字、版本守卫、失败保留输入草稿。不会写私人研究数据到 GitHub。
+- 不生成独立 Graph View，不更改真实 `renderer.nodeLookup[*].x/y`，也不把虚拟边插入图中。点击锁定仅选择当前焦点，卸载还原拦截的方法。
+- 前端 overlay 随原生图的相机移动，无额外同步服务、HTTP 代理或自动 PDF 云端上传。
+- 研究证据和 AI 生成解释必须独立审核；短句不等于科学事实。
 
-## 设计参考
+## Acknowledgments
 
-感谢社区对原生图谱内部接口的探索：
-- [Graph Edge Notes](https://github.com/li-zane/obsidian-graph-edge-notes)（沿原生边摆放关系标签）
-- [Graph Highlight Lock](https://github.com/ruruoni1/obsidian-graph-highlight-lock)（利用原生 Renderer 的高亮节点）
-
-本仓库实现保留独立的源码结构与改动记录，并未将其他插件代码作为依赖，也不包含私有 Vault 数据或任何凭据。
+设计参考 [Graph Edge Notes](https://github.com/li-zane/obsidian-graph-edge-notes) 的原生边语义叠加方法、[Graph Highlight Lock](https://github.com/ruruoni1/obsidian-graph-highlight-lock) 的聚焦机制；本仓库独立实现并非复制其源码。

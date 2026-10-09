@@ -2,11 +2,11 @@
  * No ItemView, no graph drawing, no R2/Cloud/MCP, no automatic Vault mutation.
  */
 'use strict';
-const {Plugin,PluginSettingTab,Setting,Notice,MarkdownRenderer,Component,parseYaml}=require('obsidian');
+const {Plugin,PluginSettingTab,Setting,Notice,MarkdownRenderer,Component,parseYaml,requestUrl}=require('obsidian');
 const NODE_KINDS=new Set(['paper','concept','method','dataset','question','center']);
 const DEFAULT_SETTINGS=Object.freeze({
   projectFolder:'INSES',overviewPath:'INSES/M00-关系总览.md',
-  pdfWidth:330,pdfHeight:450,labelMaxChars:56,
+  pdfWidth:495,pdfHeight:810,rememberPdfSize:true,labelMaxChars:32,
 });
 
 class EvidenceWeaveSettings extends PluginSettingTab{
@@ -21,9 +21,17 @@ class EvidenceWeaveSettings extends PluginSettingTab{
     new Setting(containerEl).setName('关系总览笔记路径').setDesc('读取 M00 中带 R-Pxx 证据锚点的关系说明。')
       .addText(t=>t.setValue(this.plugin.settings.overviewPath).onChange(async v=>{
         this.plugin.settings.overviewPath=str(v);await this.plugin.saveData(this.plugin.settings);await this.plugin.refreshModel();}));
-    new Setting(containerEl).setName('PDF 浮窗宽度').addSlider(sl=>sl.setLimits(245,520,5)
+    new Setting(containerEl).setName('PDF 默认宽度').setDesc('PDF 会随原生图谱一起缩放，也支持拖动四角改变宽高。').addSlider(sl=>sl.setLimits(320,900,5)
       .setValue(this.plugin.settings.pdfWidth).setDynamicTooltip().onChange(async v=>{
         this.plugin.settings.pdfWidth=v;await this.plugin.saveData(this.plugin.settings);}));
+    new Setting(containerEl).setName('PDF 默认高度').addSlider(sl=>sl.setLimits(360,1300,10)
+      .setValue(this.plugin.settings.pdfHeight).setDynamicTooltip().onChange(async v=>{
+        this.plugin.settings.pdfHeight=v;await this.plugin.saveData(this.plugin.settings);}));
+    new Setting(containerEl).setName('记住拖拽后的 PDF 尺寸')
+      .setDesc('拖动窗口四角后，新尺寸成为以后打开 PDF 的默认尺寸。')
+      .addToggle(t=>t.setValue(this.plugin.settings.rememberPdfSize).onChange(async v=>{
+        this.plugin.settings.rememberPdfSize=v;await this.plugin.saveData(this.plugin.settings);
+      }));
   }
 }
 
@@ -31,6 +39,14 @@ class EvidenceWeavePlugin extends Plugin{
   async onload(){
     const data=await this.loadData()||{};
     this.settings={...DEFAULT_SETTINGS,...data};
+    if(!data.__ewSchemaVersion || data.__ewSchemaVersion<4){
+      // v0.3 width/height defaults were 330x450. Upgrade only unchanged
+      // defaults; preserve manually adjusted existing PDF window sizes.
+      if(data.pdfWidth===undefined||data.pdfWidth===330)this.settings.pdfWidth=495;
+      if(data.pdfHeight===undefined||data.pdfHeight===450)this.settings.pdfHeight=810;
+      this.settings.__ewSchemaVersion=4;
+      await this.saveData(this.settings);
+    }
     this.model={nodes:[],edges:[]};this.bindings=new Map();
     this.pendingRefresh=0;
     await this.refreshModel();
@@ -88,4 +104,7 @@ module.exports=EvidenceWeavePlugin;
 // Pure helpers for unit tests (Obsidian ignores extra exports).
 module.exports._test={placePdfByNode,readableEdgeAngle,labelPosition,matchNativeRelation,
   viewpointForNativeRelation,patchOverviewSummary,patchTypedSummary,
-  parseOverviewRelationships,buildNodeIndex,discoverPdfUrl,rendererFromLeaf,NativeGraphAdapter};
+  parseOverviewRelationships,buildNodeIndex,discoverPdfUrl,rendererFromLeaf,NativeGraphAdapter,
+  shortLabelFor,patchOverviewLabel,patchTypedLabel,validateShortLabel,
+  screenToWorld,worldToScreen,graphScaleFactor,pdfOriginForNode,resizedWorldPanel,movedWorldPanel,
+  avoidLabelCollisions,NativeGraphBinding,eventMayCommit};
