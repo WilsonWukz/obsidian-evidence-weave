@@ -1,17 +1,37 @@
-name: Publish Community Release (manual)
+name: Publish Community Release
+
+# Manual releases are supported for all future versions.
+# The push trigger below is restricted to the explicitly approved 0.5.0
+# community release merge, and does not auto-publish other versions.
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Exact manifest version without v prefix, e.g. 0.5.0'
+        description: 'Exact manifest version without v prefix (e.g. 0.5.0)'
         required: true
         type: string
+  push:
+    branches: [main]
+    paths:
+      - manifest.json
+
 permissions:
   contents: write
+
+concurrency:
+  group: community-release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   publish:
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'push' &&
+        contains(github.event.head_commit.message, '[community-release:0.5.0]')))
     runs-on: ubuntu-latest
+    env:
+      REQUESTED_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || '0.5.0' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -20,20 +40,18 @@ jobs:
       - name: Build and test
         run: npm run check
       - name: Validate release
-        env:
-          REQUESTED_VERSION: ${{ inputs.version }}
         run: |
           set -eu
           VERSION=$(node -p "require('./manifest.json').version")
           test "$REQUESTED_VERSION" = "$VERSION"
           test "$VERSION" = "$(node -p "require('./package.json').version")"
+          test "$VERSION" = "$(node -p "require('./versions.json')[process.env.REQUESTED_VERSION] && process.env.REQUESTED_VERSION)")
           git diff --exit-code -- main.js
           test -z "$(git status --porcelain)"
           for f in main.js manifest.json styles.css LICENSE README.md; do test -s "$f"; done
       - name: Publish version-tagged GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          REQUESTED_VERSION: ${{ inputs.version }}
         run: |
           set -eu
           if gh release view "$REQUESTED_VERSION" >/dev/null 2>&1; then
