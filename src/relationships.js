@@ -344,19 +344,29 @@ async function buildGraphModel(app, settings) {
   const nodes = [];
   const relationFiles = [];
   for (const file of files) {
-    const fm = app.metadataCache.getFileCache(file)?.frontmatter || {};
+    const cache = app.metadataCache.getFileCache(file) || {};
+    const fm = cache.frontmatter || {};
     if (str(fm.relation_id) || str(fm.node_type) === 'relation') {
       relationFiles.push({ file, fm }); continue;
     }
     const kind = str(fm.node_type);
     const paperId = str(fm.paper_id);
     const isCenter = kind === 'center' || file.basename === 'C00-INSES';
-    if (!isCenter && !paperId && !NODE_KINDS.has(kind)) continue;
+    // Generic Obsidian Markdown: PDF embeds/links often appear without YAML.
+    // Read already-cached metadata; never scan every note body or fetch the PDF.
+    const pdfLink = [...(cache.embeds || []), ...(cache.links || [])]
+      .map(item => str(item?.link).split('#')[0].split('?')[0])
+      .find(link => /\.pdf$/i.test(link)) || '';
+    const metadataPdf = str(fm.pdf_path || fm.pdf);
+    const hasPdfMetadata=Boolean(str(fm.pdf_url||fm.pdfUrl)||metadataPdf||pdfLink);
+    const tags = Array.isArray(fm.tags) ? fm.tags : str(fm.tags).split(/[\s,]+/u);
+    const isPaperTag = tags.some(tag => str(tag).replace(/^#/u,'').toLowerCase()==='paper');
+    if (!isCenter && !paperId && !NODE_KINDS.has(kind) && !hasPdfMetadata && !isPaperTag) continue;
     const id = paperId || (isCenter ? 'C00' : file.path);
     nodes.push({ id, path: file.path, basename: file.basename,
       title: str(fm.title) || file.basename,
       kind: isCenter ? 'center' : (kind && NODE_KINDS.has(kind) ? kind : 'paper'),
-      zoteroKey: str(fm.zotero_key), pdfPath: str(fm.pdf_path || fm.pdf),
+      zoteroKey: str(fm.zotero_key), pdfPath: metadataPdf || pdfLink,
       pdfUrl: safeWebUrl(fm.pdf_url),
       sourceUrl: safeWebUrl(fm.source_url || fm.url || fm.URL),
       file,
