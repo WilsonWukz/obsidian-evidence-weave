@@ -1,9 +1,9 @@
-name: Check build
+name: Check EvidenceWeave native Graph integration
 on:
   push:
   pull_request:
 jobs:
-  check:
+  build-and-unit-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -11,4 +11,5 @@ jobs:
         with:
           node-version: '22'
       - run: npm run build
+      - run: npm test
       - run: test -s main.js && test -s manifest.json && test -s styles.css
