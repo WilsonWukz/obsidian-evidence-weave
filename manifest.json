@@ -1,9 +1,9 @@
 {
   "id": "evidence-weave",
   "name": "EvidenceWeave",
-  "version": "0.4.1",
-  "minAppVersion": "1.8.0",
-  "description": "Lightweight inline PDF and evidence labels for Obsidian's native Graph View.",
+  "version": "0.5.0",
+  "minAppVersion": "1.14.4",
+  "description": "Add PDF previews and editable relationship labels to the native graph view.",
   "author": "WilsonWukz",
   "isDesktopOnly": true
 }
